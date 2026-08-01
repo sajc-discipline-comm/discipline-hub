@@ -163,6 +163,11 @@ button.sm{font-size:14px;padding:9px 15px}
 .row .body{flex:1;min-width:0}
 .row .p{font-weight:600;font-size:17px}
 .row .p small{font-weight:400;color:var(--muted);font-size:15px;margin-left:7px}
+/* Class and level on their own line. Three short lines read faster than one
+   long one when you are scanning forty rows for a name you half-remember. */
+.row .meta{font-size:14px;color:var(--muted);margin-top:1px;display:flex;align-items:center;
+  gap:9px;flex-wrap:wrap}
+.row .meta .tag{font-size:10.5px;padding:3px 8px}
 .row .s{font-size:13.5px;color:var(--muted);margin-top:2px}
 .row .s b{color:var(--ink);font-weight:600}
 .row.done{opacity:.42;background:#f0eeea;border-color:var(--line);border-left-color:var(--line)}
@@ -297,6 +302,19 @@ table.bracket td{border:0;padding:9px 10px}
 table.bracket tr.here td{font-weight:600;border-top:2px solid var(--accent);border-bottom:2px solid var(--accent)}
 table.bracket tr.here td:first-child{border-left:2px solid var(--accent)}
 table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
+
+.loading{display:flex;align-items:center;gap:14px;margin-top:14px;color:var(--muted);font-size:14.5px}
+.loading b{display:block;color:var(--ink);font-weight:600;font-size:15.5px}
+.loading span{display:block;font-size:13.5px}
+.spin{flex:0 0 auto;width:19px;height:19px;border-radius:50%;
+  border:2.5px solid var(--line);border-top-color:var(--accent);animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.skel{margin-top:12px}
+.skel i{display:block;height:56px;border-radius:9px;background:linear-gradient(90deg,#f1efea,#f7f5f1,#f1efea);
+  background-size:200% 100%;animation:sh 1.3s var(--curve) infinite;margin-bottom:5px}
+.skel i:nth-child(2){animation-delay:.12s;opacity:.75}
+.skel i:nth-child(3){animation-delay:.24s;opacity:.5}
+@keyframes sh{0%{background-position:120% 0}100%{background-position:-20% 0}}
 
 .blank{color:var(--muted);padding:46px 0 10px;font-size:17px}
 .hidden{display:none !important}
@@ -719,7 +737,8 @@ function lcRow(x, i){
   if (isStamped(x)){
     var st = S.stamped[x.entryId];
     return '<div class="row done flat"><div class="badge">' + n + '</div>' +
-      '<div class="body"><div class="p">' + esc(x.name) + ' <small>' + esc(x.cls) + '</small></div>' +
+      '<div class="body"><div class="p">' + esc(x.name) + '</div>' +
+      '<div class="meta">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) + '</div>' +
       '<div class="s">CT emailed today by ' + esc(st.by) + '</div></div>' +
       statHtml(x) + '<div class="tierslot"><span class="tag ok">Done</span></div>' +
       goHtml(x) + '</div>';
@@ -728,8 +747,8 @@ function lcRow(x, i){
   var thu = (x.domain === 'Thursday privilege');
   return '<div class="row ' + cls + (S.sel[x.entryId]?' sel':'') + '" data-pick="' + esc(x.entryId) + '">' +
     '<div class="badge">' + (S.sel[x.entryId] ? '&#10003;' : n) + '</div>' +
-    '<div class="body"><div class="p">' + esc(x.name) +
-      ' <small>' + esc(x.cls) + ' &middot; ' + esc(x.cohort) + '</small>' +
+    '<div class="body"><div class="p">' + esc(x.name) + '</div>' +
+    '<div class="meta">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) +
       (thu ? ' <span class="tag thu">Thursday privilege</span>' : '') + '</div>' +
     '<div class="s">' + (thu
         ? esc(x.term) + ' separate Thursdays &mdash; latest <b>' + esc(longish(x.last)) + '</b>'
@@ -759,7 +778,8 @@ function goHtml(x){
 
 function heldRow(x){
   return '<div class="row flat"><div class="badge">&#9208;</div>' +
-    '<div class="body"><div class="p">' + esc(x.name) + ' <small>' + esc(x.cls) + '</small></div>' +
+    '<div class="body"><div class="p">' + esc(x.name) + '</div>' +
+    '<div class="meta">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) + '</div>' +
     '<div class="s">On hold since ' + esc(x.heldOn) + ' by ' + esc(x.heldBy) +
       (x.heldWhy ? ' &mdash; ' + esc(x.heldWhy) : '') +
       '</div></div>' +
@@ -805,6 +825,10 @@ function openStudent(entryId){
      the headline figure from whichever row happened to be clicked made the
      student page contradict the list it was opened from. */
   S.student = x; S.history = null; S.hErr = ''; S.ask = null;
+  /* Set BEFORE the screen is drawn. Otherwise the first paint has no history
+     and no reason given for not having one, and a slow read looks like a
+     broken page rather than a page that is working. */
+  S.hLoading = true;
   go('student');
   loadHistory(x.id);
 }
@@ -897,7 +921,12 @@ function groupedHistory(){
 }
 
 function timelineHtml(){
-  if (S.hLoading) return '<div class="blank">Reading the year&hellip;</div>';
+  if (S.hLoading){
+    return '<div class="loading"><div class="spin"></div>' +
+      '<div><b>Reading the whole academic year&hellip;</b>' +
+      '<span>Every offence, every term, including the ones that stopped counting.</span></div></div>' +
+      '<div class="skel"><i></i><i></i><i></i></div>';
+  }
   if (S.hErr) return '<div class="note err">' + esc(S.hErr) + '</div>';
   if (!S.history) return '';
   var groups = groupedHistory();
@@ -1074,7 +1103,6 @@ function studentHtml(){
         '</div>' +
         '<div class="lcact">' + esc(r.action) + '</div>' +
         (heldNow(r) ? '<div class="lchold">⏸ follow-up on hold</div>' : '') +
-        (here ? '<div class="lchere">you came in from here</div>' : '') +
       '</div>';
     }).join('') + '</div>' +
     (mine.length > 1

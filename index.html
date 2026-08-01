@@ -218,6 +218,31 @@ table td.n{font-variant-numeric:tabular-nums;text-align:right}
 tr.t5 td{background:var(--wash5)} tr.t4 td{background:var(--wash4)}
 tr.t3 td{background:var(--wash3)} tr.t2 td{background:var(--wash2)}
 
+.opn{color:var(--accent);cursor:pointer;text-decoration:underline}
+.opn:hover{color:var(--accent-deep)}
+
+.bigstats{display:flex;gap:54px;margin-top:26px;flex-wrap:wrap}
+.bigstats .k{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.13em;color:var(--muted)}
+.bigstats .v{font-size:46px;font-weight:600;line-height:1.1;font-family:'Fraunces',Georgia,serif;
+  font-variation-settings:'opsz' 90,'SOFT' 30,'WONK' 1}
+
+.tl{margin-top:6px}
+.tlrow{display:flex;gap:18px;align-items:flex-start;padding:12px 16px;background:var(--raised);
+  border:1px solid var(--line);border-radius:9px;margin-bottom:5px}
+.tlrow.off{background:#f0eeea;opacity:.72}
+.tld{flex:0 0 190px;font-weight:600;font-size:15px}
+.tld span{display:block;font-weight:400;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.tlb{flex:1;min-width:0;font-size:15px}
+.tlb small{color:var(--muted);font-size:13px;margin-left:6px}
+.tlb .tag{margin-right:4px}
+.tlwhy{font-size:13px;color:var(--muted);margin-top:4px}
+.tla{flex:0 0 auto}
+
+table.bracket td{border:0;padding:9px 10px}
+table.bracket tr.here td{font-weight:600;border-top:2px solid var(--accent);border-bottom:2px solid var(--accent)}
+table.bracket tr.here td:first-child{border-left:2px solid var(--accent)}
+table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
+
 .blank{color:var(--muted);padding:46px 0 10px;font-size:17px}
 .hidden{display:none !important}
 
@@ -241,11 +266,14 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbzEviXmBucgufueIuXLJS2YnK
 
 /* The other tools in the project. One bookmark instead of four. */
 var TOOLS = [
-  { t:'Latecoming Scanner',       s:'Gate duty &mdash; photograph the card',
-    u:'https://sajc-discipline-comm.github.io/latecoming-live/' },
+  { t:'Latecoming Scanner',          s:'Gate duty &mdash; photograph the card',
+    u:'https://sajc-discipline-comm.github.io/latecoming-scanner/' },
   { t:'Grooming &amp; Attire Check', s:'Check, recheck, and the term list',
     u:'https://sajc-discipline-comm.github.io/grooming-and-attire-check/' },
-  { t:'Early Release Form',       s:'General Office &mdash; green slips', u:'' }
+  { t:'Early Release Form',          s:'General Office &mdash; green slips',
+    u:'https://sajc-discipline-comm.github.io/green-slip/' },
+  { t:'Latecoming &mdash; Live Data', s:'General Office &mdash; this morning\'s gate scans',
+    u:'https://sajc-discipline-comm.github.io/latecoming-live/' }
 ];
 
 /* How old a snapshot has to be before the stamp turns amber. */
@@ -259,6 +287,12 @@ var S = {
   det:null,             // hubDetention's reply, or null
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
+  student:null,         // { id, name, cls, cohort, domain, row } — who is open
+  history:null,         // hubHistory's reply for that student
+  hLoading:false, hErr:'',
+  ask:null,             // { kind:'overturn'|'hold'|'unhold', entryId, reason }
+  local:{},             // entryId -> 'Overturned', until the next rebuild
+  holdLocal:{},         // studentId|domain -> 'Held' | 'Open', likewise
   sel:{},               // entryId -> true
   stamped:{},           // entryId -> {by, when} — optimistic, until the next rebuild
   result:null,
@@ -473,6 +507,7 @@ function signOut(){
   TOKEN=null; S.teachers=null;
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
   S.err=''; S.first=true; S.result=null; S.name='';
+  S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   render(true);
 }
 
@@ -503,6 +538,7 @@ function render(moved){
   else if (S.view==='lc')     html = lcHtml();
   else if (S.view==='email')  html = emailHtml();
   else if (S.view==='sent')   html = sentHtml();
+  else if (S.view==='student') html = studentHtml();
   else if (S.view==='soon')   html = soonHtml();
   v.innerHTML = html;
   if (moved){ v.scrollTop = 0; } else { v.scrollTop = keep; }
@@ -629,7 +665,8 @@ function lcRow(x, i){
     var st = S.stamped[x.entryId];
     return '<div class="row done flat"><div class="badge">' + n + '</div>' +
       '<div class="body"><div class="p">' + esc(x.name) + ' <small>' + esc(x.cls) + '</small></div>' +
-      '<div class="s">CT emailed today by ' + esc(st.by) + '</div></div>' +
+      '<div class="s">CT emailed today by ' + esc(st.by) +
+        ' &nbsp;&middot;&nbsp; <a class="opn" data-open="' + esc(x.entryId) + '">open</a></div></div>' +
       statHtml(x) + '<div class="tierslot"><span class="tag ok">Done</span></div></div>';
   }
   var cls = sevClass(x.tier);
@@ -641,7 +678,8 @@ function lcRow(x, i){
       (thu ? ' <span class="tag thu">Thursday privilege</span>' : '') + '</div>' +
     '<div class="s">' + (thu
         ? esc(x.term) + ' separate Thursdays &mdash; latest <b>' + esc(longish(x.last)) + '</b>'
-        : ordinal(x.term) + ' latecoming offence on <b>' + esc(longish(x.last)) + '</b>') + '</div></div>' +
+        : ordinal(x.term) + ' latecoming offence on <b>' + esc(longish(x.last)) + '</b>') +
+      ' &nbsp;&middot;&nbsp; <a class="opn" data-open="' + esc(x.entryId) + '">open</a></div></div>' +
     statHtml(x) +
     '<div class="tierslot"><span class="tag ' + (thu ? 'quiet' : cls) + '">' +
       /* A one-rung ladder has no tiers to compare, so a "Tier 1" beside a
@@ -654,7 +692,8 @@ function heldRow(x){
   return '<div class="row flat"><div class="badge">&#9208;</div>' +
     '<div class="body"><div class="p">' + esc(x.name) + ' <small>' + esc(x.cls) + '</small></div>' +
     '<div class="s">On hold since ' + esc(x.heldOn) + ' by ' + esc(x.heldBy) +
-      (x.heldWhy ? ' &mdash; ' + esc(x.heldWhy) : '') + '</div></div>' +
+      (x.heldWhy ? ' &mdash; ' + esc(x.heldWhy) : '') +
+      ' &nbsp;&middot;&nbsp; <a class="opn" data-open="' + esc(x.entryId) + '">open</a></div></div>' +
     statHtml(x) + '<div class="tierslot"><span class="tag quiet">On hold</span></div></div>';
 }
 
@@ -679,6 +718,174 @@ function legendHtml(key){
       return '<div class="li"><b class="' + sevClass(t) + '">Tier ' + t + '</b>' +
         '<span>' + esc(l.action || '') + '</span></div>';
     }).join('') + '</div>';
+}
+
+/* ── one student ──────────────────────────────────────────────────────── */
+/* Opened from any row in a worklist. It exists because the list can only ever
+   say WHAT the count is, and the question somebody actually has at the point
+   of following up is WHY — which dates, was one of them already excused, and
+   is there a reason not to count one of them at all. */
+function openStudent(entryId){
+  var x = null;
+  allRows().forEach(function(r){ if (r.entryId === entryId) x = r; });
+  if (!x) return;
+  S.student = x; S.history = null; S.hErr = ''; S.ask = null;
+  go('student');
+  loadHistory(x.id);
+}
+
+function loadHistory(id){
+  S.hLoading = true;
+  api('hubHistory', { token: TOKEN, studentId: id }).then(function(res){
+    S.hLoading = false;
+    if (!res || !res.ok){ S.hErr = (res && res.error) || 'The history could not be read.'; render(); return; }
+    S.history = res; render();
+  }).catch(function(){
+    S.hLoading = false; S.hErr = 'Could not reach the server.'; render();
+  });
+}
+
+function stateOf(r){ return S.local[r.entryId] || String(r.state || ''); }
+function isLive(r){ return /counted/i.test(stateOf(r)); }
+
+function heldNow(x){
+  var k = x.id + '|' + x.domain;
+  if (S.holdLocal[k]) return S.holdLocal[k] === 'Held';
+  return isHeld(x);
+}
+
+/* Every offence in the academic year, oldest first, exactly as C returns it.
+   A row whose date will not parse is kept and sorted last rather than dropped —
+   hiding a real offence because a cell is malformed is the worse failure. */
+function timelineHtml(){
+  if (S.hLoading) return '<div class="blank">Reading the year&hellip;</div>';
+  if (S.hErr) return '<div class="note err">' + esc(S.hErr) + '</div>';
+  if (!S.history) return '';
+  var rows = S.history.rows || [];
+  if (!rows.length) return '<div class="blank">Nothing recorded this academic year.</div>';
+
+  return '<div class="tl">' + rows.map(function(r){
+    var st = stateOf(r);
+    var live = /counted/i.test(st);
+    var bad  = !/^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/.test(String(r.date||''));
+    var tags = '';
+    if (Number(r.counts) === 2) tags += '<span class="tag t4">counts twice</span> ';
+    if (!live) tags += '<span class="tag quiet">' + esc(st || 'not counted') + '</span> ';
+    if (r.followedUp) tags += '<span class="tag ok">followed up</span> ';
+    if (bad) tags += '<span class="tag t5">date unreadable</span> ';
+
+    var why = '';
+    if (!live && (r.stateChangedBy || r.stateReason)){
+      why = '<div class="tlwhy">' + esc(r.stateChangedBy || '') +
+            (r.stateReason ? ' &mdash; ' + esc(r.stateReason) : '') + '</div>';
+    } else if (r.followedUp){
+      why = '<div class="tlwhy">' + esc(r.followedUp) +
+            (r.followedUpBy ? ' by ' + esc(r.followedUpBy) : '') +
+            (r.actionTaken ? ' &mdash; ' + esc(r.actionTaken) : '') + '</div>';
+    }
+
+    return '<div class="tlrow' + (live ? '' : ' off') + '">' +
+      '<div class="tld">' + esc(r.date || '—') + '<span>' + esc(r.time || '') + '</span></div>' +
+      '<div class="tlb"><b>' + esc(r.status || '') + '</b>' +
+        (r.reason ? ' <small>' + esc(r.reason) + '</small>' : '') +
+        (r.term ? ' <small>Term ' + esc(r.term) + '</small>' : '') +
+        ' ' + tags + why + '</div>' +
+      '<div class="tla">' + (live
+        ? '<button class="plain" data-excuse="' + esc(r.entryId) + '">Excuse this one</button>'
+        : '') + '</div></div>';
+  }).join('') + '</div>';
+}
+
+/* The ladder, with this student's tier bracketed. */
+function ladderTableHtml(x){
+  var L = laddersFor(x.domain);
+  if (!L.length) return '';
+  return '<div class="grouplabel">' + esc(x.domain) + ' &mdash; as 🪜 Ladders reads today</div>' +
+    '<table class="bracket"><tbody>' + L.map(function(l){
+      var t = Number(l.tier)||0;
+      var here = (t === x.tier);
+      return '<tr class="' + (here?'here ':'') + sevClass(t) + '">' +
+        '<td style="width:96px;white-space:nowrap"><span class="tag ' + sevClass(t) + '">Tier ' + t + '</span></td>' +
+        '<td style="width:56px" class="n">' + esc(l.atCount !== undefined ? l.atCount : '') + '</td>' +
+        '<td>' + esc(l.action || '') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+function askHtml(){
+  if (!S.ask) return '';
+  var a = S.ask;
+  if (a.kind === 'overturn'){
+    return '<div class="note q"><b>Excuse this offence?</b> ' +
+      'It stays in the Log exactly as it was recorded &mdash; the state becomes ' +
+      '<b>Overturned</b>, the count drops by one at the next rebuild, and your name and ' +
+      'reason go beside it. <b>This is not the same as Waived</b>: waived is what the Cockpit ' +
+      'reconciliation observed, overturned is what a person decided. ' +
+      'A follow-up already stamped stays exactly where it is.' +
+      '<div class="field"><label>Why &mdash; required</label>' +
+        '<textarea id="reason" rows="2" placeholder="e.g. Bus breakdown along Upper Serangoon, confirmed by the CT."></textarea></div>' +
+      '<div class="stack rowwise"><button id="doask"' + (S.busy?' disabled':'') + '>' +
+        (S.busy?'Recording&hellip;':'Excuse it') + '</button>' +
+        '<button class="plain" id="cancelask">Cancel</button></div>' +
+      (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') + '</div>';
+  }
+  if (a.kind === 'hold'){
+    return '<div class="note q"><b>Hold follow-up for ' + esc(S.student.domain) + '?</b> ' +
+      'They come off this worklist until you release it. ' +
+      '<b>Offences keep accruing while a hold is on</b> &mdash; only the following up stops, ' +
+      'so what they come back to is the true figure. It holds this ladder only; ' +
+      'anything else they owe carries on.' +
+      '<div class="field"><label>Why &mdash; required</label>' +
+        '<textarea id="reason" rows="2" placeholder="e.g. Family bereavement. DM aware, revisit after the September break."></textarea></div>' +
+      '<div class="stack rowwise"><button id="doask"' + (S.busy?' disabled':'') + '>' +
+        (S.busy?'Recording&hellip;':'Put the follow-up on hold') + '</button>' +
+        '<button class="plain" id="cancelask">Cancel</button></div>' +
+      (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') + '</div>';
+  }
+  return '<div class="note q"><b>Release the hold on ' + esc(S.student.domain) + '?</b> ' +
+    'They return to the worklist at whatever tier they have reached in the meantime. ' +
+    'The hold row is kept, closed, with your name on it.' +
+    '<div class="stack rowwise"><button id="doask"' + (S.busy?' disabled':'') + '>' +
+      (S.busy?'Recording&hellip;':'Release it') + '</button>' +
+      '<button class="plain" id="cancelask">Cancel</button></div>' +
+    (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') + '</div>';
+}
+
+function studentHtml(){
+  var x = S.student;
+  var held = heldNow(x);
+  var over = Object.keys(S.local).length;
+
+  return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="appbar"><a data-go="lc">&larr; ' + esc(areaOf(S.area).title) + '</a>' +
+      '<span>&middot;</span><a data-go="menu">All areas</a></div>' +
+    '<h1>' + esc(x.name) + '</h1>' +
+    '<div class="who">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) + ' &middot; ' + esc(x.domain) +
+      (held ? ' &middot; <b>follow-up on hold</b>' : '') + '</div>' +
+
+    '<div class="bigstats">' +
+      '<div><div class="k">This term</div><div class="v">' + x.term + '</div></div>' +
+      '<div><div class="k">This year</div><div class="v">' + x.year + '</div></div>' +
+      '<div><div class="k">Tier</div><div class="v">' + (x.tier || '—') + '</div></div>' +
+      (x.sessions ? '<div><div class="k">Detentions owed</div><div class="v">' + x.sessions + '</div></div>' : '') +
+    '</div>' +
+
+    (over ? '<div class="note warn"><b>' + over + ' offence' + (over===1?'':'s') +
+      ' excused just now.</b> The figures above still come from the last snapshot and ' +
+      'will drop at the next hourly rebuild.</div>' : '') +
+
+    (S.ask ? askHtml() :
+      '<div class="stack rowwise">' +
+        '<button class="ghost" id="hold">' +
+          (held ? 'Release the hold' : 'Hold follow-up') + '</button>' +
+      '</div>') +
+
+    '<div class="grouplabel">Every offence this academic year' +
+      (S.history ? ' &mdash; ' + S.history.academicYear : '') + '</div>' +
+    timelineHtml() +
+    ladderTableHtml(x) +
+    '<div class="foot"><span>Excusing an offence never edits what was recorded. The row stays; ' +
+      'its state changes, with who decided and why.</span></div>' +
+  '</div></div>';
 }
 
 /* ── the daily email ──────────────────────────────────────────────────── */
@@ -855,6 +1062,34 @@ function record(){
   });
 }
 
+/* The two other writes this screen owns. Both record A DECISION SOMEBODY TOOK,
+   never an edit to what happened. */
+function doAsk(){
+  var a = S.ask, r = $('reason') ? $('reason').value.trim() : '';
+  if (a.kind !== 'unhold' && !r){
+    S.err = 'A reason is required. Without one the record is indistinguishable from a mistake ' +
+            'when somebody reads it back in a year.';
+    render(); return;
+  }
+  S.busy = true; S.err = ''; render();
+
+  var call, body = { token: TOKEN, by: S.user };
+  if (a.kind === 'overturn'){ call='hubOverturn'; body.entryId = a.entryId; body.reason = r; }
+  else { call = (a.kind==='hold') ? 'hubHold' : 'hubUnhold';
+         body.studentId = S.student.id; body.domain = S.student.domain;
+         if (r) body.reason = r; }
+
+  api(call, body).then(function(res){
+    S.busy = false;
+    if (!res || !res.ok){ S.err = (res && res.error) || 'Nothing was recorded.'; render(); return; }
+    if (a.kind === 'overturn') S.local[a.entryId] = 'Overturned';
+    else S.holdLocal[S.student.id + '|' + S.student.domain] = (a.kind==='hold') ? 'Held' : 'Open';
+    S.ask = null; render();
+  }).catch(function(){
+    S.busy = false; S.err = 'Could not reach the server. Nothing was recorded — try again.'; render();
+  });
+}
+
 function sentHtml(){
   var r = S.result || { stamped:0, already:0, total:0 };
   var head = r.stamped + ' recorded.';
@@ -945,6 +1180,12 @@ function wire(){
   });
   if ($('none')) $('none').addEventListener('click', function(){ S.sel={}; render(); });
   if ($('record')) $('record').addEventListener('click', record);
+  if ($('hold')) $('hold').addEventListener('click', function(){
+    S.ask = { kind: heldNow(S.student) ? 'unhold' : 'hold' }; S.err=''; render();
+  });
+  if ($('doask')) $('doask').addEventListener('click', doAsk);
+  if ($('cancelask')) $('cancelask').addEventListener('click', function(){ S.ask=null; S.err=''; render(); });
+  if ($('reason')) $('reason').focus();
   if ($('copyaddr')) $('copyaddr').addEventListener('click', function(){
     copy(recipients().list.map(function(p){ return p.email; }).join('; '), this); });
   if ($('copybody')) $('copybody').addEventListener('click', function(){ copy(emailBody(), this); });
@@ -964,6 +1205,12 @@ function wire(){
       if (u) window.open(u, '_blank', 'noopener');
       return;
     }
+
+    var opn = t.closest && t.closest('[data-open]');
+    if (opn){ e.stopPropagation(); openStudent(opn.getAttribute('data-open')); return; }
+
+    var exc = t.closest && t.closest('[data-excuse]');
+    if (exc){ S.ask = { kind:'overturn', entryId: exc.getAttribute('data-excuse') }; S.err=''; render(); return; }
 
     var pick = t.closest && t.closest('[data-pick]');
     if (pick){
@@ -1014,6 +1261,7 @@ window.__hubWorklist = worklist;
 window.__hubRecipients = recipients;
 window.__hubEmailBody = emailBody;
 window.__hubPickedThu = pickedThu;
+window.__hubOpenStudent = openStudent;
 
 render(true);
 

@@ -173,7 +173,19 @@ button.sm{font-size:14px;padding:9px 15px}
 .stat .k{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.13em;color:var(--muted);white-space:nowrap}
 .stat .v{font-size:27px;font-weight:600;line-height:1.15;font-family:'Fraunces',Georgia,serif;
   font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1}
-.tierslot{flex:0 0 250px;text-align:right}
+.tierslot{flex:0 0 230px;text-align:right}
+.rowgo{flex:0 0 auto;display:flex;align-items:center;gap:0;margin-left:6px;padding:8px 6px 8px 2px;
+  border-radius:8px;color:#b8b2a6;cursor:pointer;
+  transition:color .2s var(--curve),background .2s var(--curve),gap .2s var(--curve)}
+.rowgo .lbl{max-width:0;overflow:hidden;white-space:nowrap;font-size:13px;font-weight:600;
+  opacity:0;transition:max-width .22s var(--curve),opacity .18s var(--curve)}
+.rowgo .chev{font-size:19px;line-height:1;transition:transform .22s var(--curve)}
+.row:hover .rowgo{color:var(--accent)}
+.row:hover .rowgo .lbl{max-width:52px;opacity:1}
+.row:hover .rowgo .chev{transform:translateX(3px)}
+.rowgo:hover{background:var(--accent-tint);color:var(--accent-deep) !important}
+.rowgo:hover .chev{transform:translateX(5px)}
+.rowgo:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .tierslot .d{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.4}
 
 .tag{font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:5px 11px;
@@ -226,6 +238,26 @@ tr.t3 td{background:var(--wash3)} tr.t2 td{background:var(--wash2)}
 .bigstats .v{font-size:46px;font-weight:600;line-height:1.1;font-family:'Fraunces',Georgia,serif;
   font-variation-settings:'opsz' 90,'SOFT' 30,'WONK' 1}
 
+.lgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;margin-top:12px}
+.lcard{background:var(--raised);border:1px solid var(--line);border-top:4px solid var(--line);
+  border-radius:12px;padding:16px 20px 15px;position:relative}
+.lcard.t5{border-top-color:var(--sev5)} .lcard.t4{border-top-color:var(--sev4)}
+.lcard.t3{border-top-color:var(--sev3)} .lcard.t2{border-top-color:var(--sev2)}
+.lcard.here{box-shadow:inset 0 0 0 2px var(--accent);border-color:var(--accent)}
+.lctop{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.lcname{font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;
+  font-weight:600;font-size:19px;min-width:0}
+.lcname em{display:block;font-family:'Public Sans',sans-serif;font-style:normal;font-size:12px;
+  font-weight:400;color:var(--muted);margin-top:3px}
+.lcnums{display:flex;gap:28px;margin-top:14px}
+.lcnums b{display:block;font-family:'Fraunces',Georgia,serif;
+  font-variation-settings:'opsz' 90,'SOFT' 30,'WONK' 1;font-weight:600;font-size:34px;line-height:1.05}
+.lcnums span{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--muted)}
+.lcact{margin-top:13px;font-size:14px;color:var(--muted);line-height:1.5}
+.lchold{margin-top:10px;font-size:12.5px;color:var(--warn);font-weight:600}
+.lchere{margin-top:10px;font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.12em;color:var(--accent)}
+
 .ghead{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin:22px 0 8px}
 .ghead .gh{font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;
   font-weight:600;font-size:19px}
@@ -236,6 +268,18 @@ tr.t3 td{background:var(--wash3)} tr.t2 td{background:var(--wash2)}
 .tsub b{font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1;
   font-size:19px;color:var(--ink);margin-left:4px}
 .tsub.yr b{color:var(--accent)}
+
+.tdiv{display:flex;align-items:center;gap:12px;margin:16px 0 7px;font-size:11.5px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.tdiv b{font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1;
+  font-size:17px;letter-spacing:0;color:var(--ink)}
+.tdiv:after{content:'';flex:1;height:1px;background:var(--line)}
+.tl .tdiv:first-child{margin-top:8px}
+
+.rem{margin-top:6px;padding:7px 11px;border-left:2px solid #d8d2c6;background:#f4f1eb;
+  border-radius:0 7px 7px 0;font-size:13.5px;color:var(--ink);line-height:1.5}
+.rem.none{color:var(--muted);background:none;border-left-style:dashed}
+.askrow{margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #cdd3e6;font-size:14.5px}
 
 .tl{margin-top:6px}
 .tlrow{display:flex;gap:18px;align-items:flex-start;padding:12px 16px;background:var(--raised);
@@ -676,9 +720,9 @@ function lcRow(x, i){
     var st = S.stamped[x.entryId];
     return '<div class="row done flat"><div class="badge">' + n + '</div>' +
       '<div class="body"><div class="p">' + esc(x.name) + ' <small>' + esc(x.cls) + '</small></div>' +
-      '<div class="s">CT emailed today by ' + esc(st.by) +
-        ' &nbsp;&middot;&nbsp; <a class="opn" data-open="' + esc(x.entryId) + '">open</a></div></div>' +
-      statHtml(x) + '<div class="tierslot"><span class="tag ok">Done</span></div></div>';
+      '<div class="s">CT emailed today by ' + esc(st.by) + '</div></div>' +
+      statHtml(x) + '<div class="tierslot"><span class="tag ok">Done</span></div>' +
+      goHtml(x) + '</div>';
   }
   var cls = sevClass(x.tier);
   var thu = (x.domain === 'Thursday privilege');
@@ -690,13 +734,27 @@ function lcRow(x, i){
     '<div class="s">' + (thu
         ? esc(x.term) + ' separate Thursdays &mdash; latest <b>' + esc(longish(x.last)) + '</b>'
         : ordinal(x.term) + ' latecoming offence on <b>' + esc(longish(x.last)) + '</b>') +
-      ' &nbsp;&middot;&nbsp; <a class="opn" data-open="' + esc(x.entryId) + '">open</a></div></div>' +
+      '</div></div>' +
     statHtml(x) +
     '<div class="tierslot"><span class="tag ' + (thu ? 'quiet' : cls) + '">' +
       /* A one-rung ladder has no tiers to compare, so a "Tier 1" beside a
          count of 3 Thursdays reads as a contradiction. Name the thing. */
       (thu ? 'Privilege removal' : 'Tier ' + x.tier) + '</span>' +
-      '<div class="d">' + esc(x.action) + '</div></div></div>';
+      '<div class="d">' + esc(x.action) + '</div></div>' +
+    goHtml(x) + '</div>';
+}
+
+/* THE WAY INTO THE STUDENT. A word sitting inside every row was noise on a
+   list you read forty times a morning, so it is a chevron at the edge that
+   grows its label on hover.
+
+   It is NOT hover-only. The chevron is always there and always clickable —
+   a route that only exists once you happen to point at it does not exist on
+   a touchscreen, and this is the only way to reach the student page. Hover
+   reveals the WORD, not the target. */
+function goHtml(x){
+  return '<div class="rowgo opn" data-open="' + esc(x.entryId) + '" title="Open ' + esc(x.name) + '">' +
+    '<span class="lbl">Open</span><span class="chev">&rarr;</span></div>';
 }
 
 function heldRow(x){
@@ -704,8 +762,9 @@ function heldRow(x){
     '<div class="body"><div class="p">' + esc(x.name) + ' <small>' + esc(x.cls) + '</small></div>' +
     '<div class="s">On hold since ' + esc(x.heldOn) + ' by ' + esc(x.heldBy) +
       (x.heldWhy ? ' &mdash; ' + esc(x.heldWhy) : '') +
-      ' &nbsp;&middot;&nbsp; <a class="opn" data-open="' + esc(x.entryId) + '">open</a></div></div>' +
-    statHtml(x) + '<div class="tierslot"><span class="tag quiet">On hold</span></div></div>';
+      '</div></div>' +
+    statHtml(x) + '<div class="tierslot"><span class="tag quiet">On hold</span></div>' +
+    goHtml(x) + '</div>';
 }
 
 function statHtml(x){
@@ -857,7 +916,21 @@ function timelineHtml(){
       (g.setAside ? '<div class="gaside">' + g.setAside + ' not counted &mdash; waived or overturned</div>' : '') +
     '</div>';
 
-    return head + '<div class="tl">' + g.rows.map(rowLineHtml).join('') + '</div>';
+    /* TERMS ARE SEPARATED, NOT JUST SUBTOTALLED. The ladder is read against a
+       term count, so which term a row falls in is the single most consequential
+       thing about it after the date. */
+    var body = '', lastTerm = null;
+    g.rows.forEach(function(r){
+      var t = (r.term === '' || r.term === null || r.term === undefined) ? '?' : String(r.term);
+      if (t !== lastTerm){
+        var n = g.terms[t];
+        body += '<div class="tdiv"><span>' + (t === '?' ? 'No term' : 'Term ' + esc(t)) + '</span>' +
+          (g.counts && n !== undefined ? '<b>' + n + '</b>' : '') + '</div>';
+        lastTerm = t;
+      }
+      body += rowLineHtml(r);
+    });
+    return head + '<div class="tl">' + body + '</div>';
   }).join('');
 }
 
@@ -883,13 +956,22 @@ function rowLineHtml(r){
           (r.actionTaken ? ' &mdash; ' + esc(r.actionTaken) : '') + '</div>';
   }
 
+  /* THE REMARKS COLUMN IS THE WHOLE POINT OF THIS SCREEN. Cockpit's remarks
+     are where "Bus was late" and "Parent called, unwell" actually live — the
+     evidence somebody needs in front of them to decide whether to excuse an
+     offence. Carrying the row without carrying its remark would mean deciding
+     blind, and it is the reason the old sheet had reasons jammed into a
+     column headed "Remarks CT emailed on". */
+  var rem = String(r.remarks || '').trim();
+
   return '<div class="tlrow' + (live ? '' : ' off') + '">' +
     '<div class="tld">' + esc(r.date || '—') + '<span>' + esc(r.time || '') + '</span></div>' +
     '<div class="tlb">' +
       (r.reason ? '<b>' + esc(r.reason) + '</b> ' : '') +
-      (r.term ? '<small>Term ' + esc(r.term) + '</small> ' : '') +
       (r.source ? '<small>' + esc(r.source) + '</small> ' : '') +
-      tags + why + '</div>' +
+      tags +
+      (rem ? '<div class="rem">' + esc(rem) + '</div>' : '') +
+      why + '</div>' +
     '<div class="tla">' + (live && counts
       ? '<button class="plain" data-excuse="' + esc(r.entryId) + '">Excuse this one</button>'
       : '') + '</div></div>';
@@ -914,7 +996,19 @@ function askHtml(){
   if (!S.ask) return '';
   var a = S.ask;
   if (a.kind === 'overturn'){
-    return '<div class="note q"><b>Excuse this offence?</b> ' +
+    /* The row being excused, restated with its remark, so the decision is made
+       with the evidence on screen rather than from memory of a list. */
+    var row = null;
+    ((S.history && S.history.rows) || []).forEach(function(r){ if (r.entryId === a.entryId) row = r; });
+    var ctx = row
+      ? '<div class="askrow"><b>' + esc(row.date || '') + '</b> ' + esc(row.time || '') +
+        ' &middot; ' + esc(statusLabel(row.status)) +
+        (Number(row.counts) === 2 ? ' &middot; counts twice' : '') +
+        (String(row.remarks || '').trim()
+          ? '<div class="rem">' + esc(row.remarks) + '</div>'
+          : '<div class="rem none">No remark was recorded against this one.</div>') + '</div>'
+      : '';
+    return '<div class="note q">' + ctx + '<b>Excuse this offence?</b> ' +
       'It stays in the Log exactly as it was recorded &mdash; the state becomes ' +
       '<b>Overturned</b>, the count drops by one at the next rebuild, and your name and ' +
       'reason go beside it. <b>This is not the same as Waived</b>: waived is what the Cockpit ' +
@@ -957,19 +1051,32 @@ function studentHtml(){
   /* WHERE THEY STAND — every ladder they are on, not just the one clicked.
      Each counts a different thing, and the row you arrived from is bracketed
      so the figures on the list you came from are findable here. */
+  /* WHERE THEY STAND — one card per ladder. A table forced four numbers of
+     four different kinds into aligned columns and made the wrapping action
+     text drag its row out of shape; a card lets each ladder say its own
+     figures at its own size. */
   var stand = '<div class="grouplabel">Where they stand &mdash; from the snapshot</div>' +
-    '<table class="bracket stand"><thead><tr><th>Ladder</th><th class="n">This term</th>' +
-    '<th class="n">This year</th><th>Tier</th><th>What happens next</th></tr></thead><tbody>' +
-    mine.map(function(r){
+    '<div class="lgrid">' + mine.map(function(r){
       var here = (r.entryId === x.entryId);
-      var thu = (r.domain === 'Thursday privilege');
-      return '<tr class="' + (here?'here ':'') + sevClass(r.tier) + '">' +
-        '<td>' + esc(r.domain) + (thu ? '<br><small>counts distinct Thursdays</small>' : '') +
-          (heldNow(r) ? '<br><span class="tag quiet">on hold</span>' : '') + '</td>' +
-        '<td class="n">' + r.term + '</td><td class="n">' + r.year + '</td>' +
-        '<td>' + (thu ? '&mdash;' : 'Tier ' + r.tier) + '</td>' +
-        '<td>' + esc(r.action) + '</td></tr>';
-    }).join('') + '</tbody></table>' +
+      var thu  = (r.domain === 'Thursday privilege');
+      return '<div class="lcard ' + sevClass(r.tier) + (here?' here':'') + '">' +
+        '<div class="lctop">' +
+          '<div class="lcname">' + esc(r.domain) +
+            (thu ? '<em>counts distinct Thursdays, not lates</em>' : '') + '</div>' +
+          (thu ? '<span class="tag quiet">Privilege removal</span>'
+               : '<span class="tag ' + sevClass(r.tier) + '">Tier ' + r.tier + '</span>') +
+        '</div>' +
+        '<div class="lcnums">' +
+          '<div><b>' + r.term + '</b><span>this term</span></div>' +
+          '<div><b>' + r.year + '</b><span>this year</span></div>' +
+          (r.sessions ? '<div><b>' + r.sessions + '</b><span>detention' +
+             (r.sessions===1?'':'s') + ' owed</span></div>' : '') +
+        '</div>' +
+        '<div class="lcact">' + esc(r.action) + '</div>' +
+        (heldNow(r) ? '<div class="lchold">⏸ follow-up on hold</div>' : '') +
+        (here ? '<div class="lchere">you came in from here</div>' : '') +
+      '</div>';
+    }).join('') + '</div>' +
     (mine.length > 1
       ? '<div class="note"><b>' + esc(x.name) + ' is on ' + mine.length + ' ladders at once.</b> ' +
         'They count different things, so the numbers are meant to disagree &mdash; ' +

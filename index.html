@@ -226,6 +226,17 @@ tr.t3 td{background:var(--wash3)} tr.t2 td{background:var(--wash2)}
 .bigstats .v{font-size:46px;font-weight:600;line-height:1.1;font-family:'Fraunces',Georgia,serif;
   font-variation-settings:'opsz' 90,'SOFT' 30,'WONK' 1}
 
+.ghead{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin:22px 0 8px}
+.ghead .gh{font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;
+  font-weight:600;font-size:19px}
+.ghead .gh small{font-family:'Public Sans',sans-serif;font-size:12.5px;font-weight:400;color:var(--muted)}
+.ghead .gsum{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+.ghead .gaside{flex:1 0 100%;font-size:12.5px;color:var(--muted)}
+.tsub{font-size:12.5px;color:var(--muted)}
+.tsub b{font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1;
+  font-size:19px;color:var(--ink);margin-left:4px}
+.tsub.yr b{color:var(--accent)}
+
 .tl{margin-top:6px}
 .tlrow{display:flex;gap:18px;align-items:flex-start;padding:12px 16px;background:var(--raised);
   border:1px solid var(--line);border-radius:9px;margin-bottom:5px}
@@ -729,9 +740,21 @@ function openStudent(entryId){
   var x = null;
   allRows().forEach(function(r){ if (r.entryId === entryId) x = r; });
   if (!x) return;
+  /* THE ROW YOU CLICKED IS NOT THE STUDENT. A student can sit on more than one
+     ladder at once, and each ladder counts a DIFFERENT THING — 9 lates this
+     term and 3 distinct Thursdays are the same person, correctly, and taking
+     the headline figure from whichever row happened to be clicked made the
+     student page contradict the list it was opened from. */
   S.student = x; S.history = null; S.hErr = ''; S.ask = null;
   go('student');
   loadHistory(x.id);
+}
+
+/* Every snapshot row for this student, worst ladder first. */
+function laddersOfStudent(){
+  if (!S.student) return [];
+  return allRows().filter(function(r){ return r.id === S.student.id; })
+    .sort(function(a,b){ return (b.tier - a.tier) || String(a.domain).localeCompare(String(b.domain)); });
 }
 
 function loadHistory(id){
@@ -745,6 +768,28 @@ function loadHistory(id){
   });
 }
 
+/* Which statuses count towards a ladder, read from ⚙️ Statuses via
+   hubSnapshot rather than assumed here. A(MC) is recorded and does not count;
+   so is an Awards or Official early release. Putting them in one undifferentiated
+   list of "offences" was wrong twice over — it implied the school held them
+   against the student, and it made the totals impossible to trace. */
+function statusMeta(code){
+  var list = (S.snap && S.snap.statuses) || [];
+  for (var i=0;i<list.length;i++){
+    var c = String(list[i].code || list[i].status || '').trim();
+    if (c && c === String(code||'').trim()) return list[i];
+  }
+  return null;
+}
+function statusCounts(code){
+  var m = statusMeta(code);
+  return m ? !!m.counts : true;      // unknown status: assume it counts, and say so
+}
+function statusLabel(code){
+  var m = statusMeta(code);
+  return (m && m.label) ? m.label : String(code||'');
+}
+
 function stateOf(r){ return S.local[r.entryId] || String(r.state || ''); }
 function isLive(r){ return /counted/i.test(stateOf(r)); }
 
@@ -754,46 +799,100 @@ function heldNow(x){
   return isHeld(x);
 }
 
-/* Every offence in the academic year, oldest first, exactly as C returns it.
+/* EVERYTHING RECORDED IN THE ACADEMIC YEAR, GROUPED BY STATUS.
+   One flat list mixed lates with medical certificates and made the totals
+   untraceable: the header said 9 and the list below looked like 3. Each status
+   now carries its own subtotal, broken down by term, so every figure on this
+   screen can be followed to the rows it came from.
+
    A row whose date will not parse is kept and sorted last rather than dropped —
    hiding a real offence because a cell is malformed is the worse failure. */
+var STATUS_ORDER = ['LATE', 'A(WOR)', 'A(VRP)', 'A(VRO)', 'A(PR)', 'A(MC)', 'ED'];
+function statusRank(code){
+  var i = STATUS_ORDER.indexOf(String(code||'').trim());
+  return i < 0 ? STATUS_ORDER.length : i;
+}
+
+function groupedHistory(){
+  var rows = (S.history && S.history.rows) || [];
+  var by = {}, order = [];
+  rows.forEach(function(r){
+    var k = String(r.status || '—').trim();
+    if (!by[k]){ by[k] = []; order.push(k); }
+    by[k].push(r);
+  });
+  order.sort(function(a,b){ return statusRank(a) - statusRank(b) || a.localeCompare(b); });
+  return order.map(function(k){
+    var list = by[k];
+    var terms = {}, year = 0, setAside = 0;
+    list.forEach(function(r){
+      var live = /counted/i.test(stateOf(r));
+      if (!live){ setAside++; return; }
+      var n = Number(r.counts) || 0;
+      year += n;
+      var t = (r.term === '' || r.term === null || r.term === undefined) ? '?' : String(r.term);
+      terms[t] = (terms[t] || 0) + n;
+    });
+    return { code:k, rows:list, terms:terms, year:year, setAside:setAside, counts:statusCounts(k) };
+  });
+}
+
 function timelineHtml(){
   if (S.hLoading) return '<div class="blank">Reading the year&hellip;</div>';
   if (S.hErr) return '<div class="note err">' + esc(S.hErr) + '</div>';
   if (!S.history) return '';
-  var rows = S.history.rows || [];
-  if (!rows.length) return '<div class="blank">Nothing recorded this academic year.</div>';
+  var groups = groupedHistory();
+  if (!groups.length) return '<div class="blank">Nothing recorded this academic year.</div>';
 
-  return '<div class="tl">' + rows.map(function(r){
-    var st = stateOf(r);
-    var live = /counted/i.test(st);
-    var bad  = !/^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/.test(String(r.date||''));
-    var tags = '';
-    if (Number(r.counts) === 2) tags += '<span class="tag t4">counts twice</span> ';
-    if (!live) tags += '<span class="tag quiet">' + esc(st || 'not counted') + '</span> ';
-    if (r.followedUp) tags += '<span class="tag ok">followed up</span> ';
-    if (bad) tags += '<span class="tag t5">date unreadable</span> ';
+  return groups.map(function(g){
+    var termBits = Object.keys(g.terms).sort().map(function(t){
+      return '<span class="tsub">Term ' + esc(t) + ' <b>' + g.terms[t] + '</b></span>';
+    }).join('');
 
-    var why = '';
-    if (!live && (r.stateChangedBy || r.stateReason)){
-      why = '<div class="tlwhy">' + esc(r.stateChangedBy || '') +
-            (r.stateReason ? ' &mdash; ' + esc(r.stateReason) : '') + '</div>';
-    } else if (r.followedUp){
-      why = '<div class="tlwhy">' + esc(r.followedUp) +
-            (r.followedUpBy ? ' by ' + esc(r.followedUpBy) : '') +
-            (r.actionTaken ? ' &mdash; ' + esc(r.actionTaken) : '') + '</div>';
-    }
+    var head = '<div class="ghead"><div class="gh">' + esc(statusLabel(g.code)) +
+      (statusLabel(g.code) !== g.code ? ' <small>' + esc(g.code) + '</small>' : '') + '</div>' +
+      (g.counts
+        ? '<div class="gsum">' + termBits + '<span class="tsub yr">This year <b>' + g.year + '</b></span></div>'
+        : '<div class="gsum"><span class="tag quiet">recorded, does not count</span></div>') +
+      (g.setAside ? '<div class="gaside">' + g.setAside + ' not counted &mdash; waived or overturned</div>' : '') +
+    '</div>';
 
-    return '<div class="tlrow' + (live ? '' : ' off') + '">' +
-      '<div class="tld">' + esc(r.date || '—') + '<span>' + esc(r.time || '') + '</span></div>' +
-      '<div class="tlb"><b>' + esc(r.status || '') + '</b>' +
-        (r.reason ? ' <small>' + esc(r.reason) + '</small>' : '') +
-        (r.term ? ' <small>Term ' + esc(r.term) + '</small>' : '') +
-        ' ' + tags + why + '</div>' +
-      '<div class="tla">' + (live
-        ? '<button class="plain" data-excuse="' + esc(r.entryId) + '">Excuse this one</button>'
-        : '') + '</div></div>';
-  }).join('') + '</div>';
+    return head + '<div class="tl">' + g.rows.map(rowLineHtml).join('') + '</div>';
+  }).join('');
+}
+
+function rowLineHtml(r){
+  var st = stateOf(r);
+  var live = /counted/i.test(st);
+  var bad  = !/^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/.test(String(r.date||''));
+  var counts = statusCounts(r.status);
+
+  var tags = '';
+  if (Number(r.counts) === 2) tags += '<span class="tag t4">counts twice</span> ';
+  if (!live) tags += '<span class="tag quiet">' + esc(st || 'not counted') + '</span> ';
+  if (r.followedUp) tags += '<span class="tag ok">followed up</span> ';
+  if (bad) tags += '<span class="tag t5">date unreadable</span> ';
+
+  var why = '';
+  if (!live && (r.stateChangedBy || r.stateReason)){
+    why = '<div class="tlwhy">' + esc(r.stateChangedBy || '') +
+          (r.stateReason ? ' &mdash; ' + esc(r.stateReason) : '') + '</div>';
+  } else if (r.followedUp){
+    why = '<div class="tlwhy">' + esc(r.followedUp) +
+          (r.followedUpBy ? ' by ' + esc(r.followedUpBy) : '') +
+          (r.actionTaken ? ' &mdash; ' + esc(r.actionTaken) : '') + '</div>';
+  }
+
+  return '<div class="tlrow' + (live ? '' : ' off') + '">' +
+    '<div class="tld">' + esc(r.date || '—') + '<span>' + esc(r.time || '') + '</span></div>' +
+    '<div class="tlb">' +
+      (r.reason ? '<b>' + esc(r.reason) + '</b> ' : '') +
+      (r.term ? '<small>Term ' + esc(r.term) + '</small> ' : '') +
+      (r.source ? '<small>' + esc(r.source) + '</small> ' : '') +
+      tags + why + '</div>' +
+    '<div class="tla">' + (live && counts
+      ? '<button class="plain" data-excuse="' + esc(r.entryId) + '">Excuse this one</button>'
+      : '') + '</div></div>';
 }
 
 /* The ladder, with this student's tier bracketed. */
@@ -801,7 +900,7 @@ function ladderTableHtml(x){
   var L = laddersFor(x.domain);
   if (!L.length) return '';
   return '<div class="grouplabel">' + esc(x.domain) + ' &mdash; as 🪜 Ladders reads today</div>' +
-    '<table class="bracket"><tbody>' + L.map(function(l){
+    '<table class="bracket ladder"><tbody>' + L.map(function(l){
       var t = Number(l.tier)||0;
       var here = (t === x.tier);
       return '<tr class="' + (here?'here ':'') + sevClass(t) + '">' +
@@ -852,22 +951,40 @@ function askHtml(){
 
 function studentHtml(){
   var x = S.student;
-  var held = heldNow(x);
+  var mine = laddersOfStudent();
   var over = Object.keys(S.local).length;
+
+  /* WHERE THEY STAND — every ladder they are on, not just the one clicked.
+     Each counts a different thing, and the row you arrived from is bracketed
+     so the figures on the list you came from are findable here. */
+  var stand = '<div class="grouplabel">Where they stand &mdash; from the snapshot</div>' +
+    '<table class="bracket stand"><thead><tr><th>Ladder</th><th class="n">This term</th>' +
+    '<th class="n">This year</th><th>Tier</th><th>What happens next</th></tr></thead><tbody>' +
+    mine.map(function(r){
+      var here = (r.entryId === x.entryId);
+      var thu = (r.domain === 'Thursday privilege');
+      return '<tr class="' + (here?'here ':'') + sevClass(r.tier) + '">' +
+        '<td>' + esc(r.domain) + (thu ? '<br><small>counts distinct Thursdays</small>' : '') +
+          (heldNow(r) ? '<br><span class="tag quiet">on hold</span>' : '') + '</td>' +
+        '<td class="n">' + r.term + '</td><td class="n">' + r.year + '</td>' +
+        '<td>' + (thu ? '&mdash;' : 'Tier ' + r.tier) + '</td>' +
+        '<td>' + esc(r.action) + '</td></tr>';
+    }).join('') + '</tbody></table>' +
+    (mine.length > 1
+      ? '<div class="note"><b>' + esc(x.name) + ' is on ' + mine.length + ' ladders at once.</b> ' +
+        'They count different things, so the numbers are meant to disagree &mdash; ' +
+        'a double late adds two to a latecoming total and one to the Thursday counter.</div>'
+      : '');
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="appbar"><a data-go="lc">&larr; ' + esc(areaOf(S.area).title) + '</a>' +
       '<span>&middot;</span><a data-go="menu">All areas</a></div>' +
     '<h1>' + esc(x.name) + '</h1>' +
-    '<div class="who">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) + ' &middot; ' + esc(x.domain) +
-      (held ? ' &middot; <b>follow-up on hold</b>' : '') + '</div>' +
+    '<div class="who">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) +
+      ' &middot; opened from ' + esc(x.domain) +
+      (heldNow(x) ? ' &middot; <b>follow-up on hold</b>' : '') + '</div>' +
 
-    '<div class="bigstats">' +
-      '<div><div class="k">This term</div><div class="v">' + x.term + '</div></div>' +
-      '<div><div class="k">This year</div><div class="v">' + x.year + '</div></div>' +
-      '<div><div class="k">Tier</div><div class="v">' + (x.tier || '—') + '</div></div>' +
-      (x.sessions ? '<div><div class="k">Detentions owed</div><div class="v">' + x.sessions + '</div></div>' : '') +
-    '</div>' +
+    stand +
 
     (over ? '<div class="note warn"><b>' + over + ' offence' + (over===1?'':'s') +
       ' excused just now.</b> The figures above still come from the last snapshot and ' +
@@ -876,11 +993,17 @@ function studentHtml(){
     (S.ask ? askHtml() :
       '<div class="stack rowwise">' +
         '<button class="ghost" id="hold">' +
-          (held ? 'Release the hold' : 'Hold follow-up') + '</button>' +
+          (heldNow(x) ? 'Release the hold on ' + esc(x.domain) : 'Hold follow-up for ' + esc(x.domain)) +
+        '</button>' +
       '</div>') +
 
-    '<div class="grouplabel">Every offence this academic year' +
-      (S.history ? ' &mdash; ' + S.history.academicYear : '') + '</div>' +
+    '<div class="grouplabel">Everything recorded in ' +
+      (S.history ? esc(S.history.academicYear) : 'the academic year') +
+      ', by type</div>' +
+    '<div class="note">This is the whole academic year, not this term &mdash; the term ' +
+      'subtotals under each heading are what the figures above are built from. ' +
+      'Statuses the school does not hold against a student, such as a medical certificate, ' +
+      'are listed for context and marked as not counting.</div>' +
     timelineHtml() +
     ladderTableHtml(x) +
     '<div class="foot"><span>Excusing an offence never edits what was recorded. The row stays; ' +

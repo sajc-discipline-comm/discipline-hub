@@ -235,6 +235,14 @@ function mainHtml(){
     '<h1>Early dismissal follow-up</h1>' +
     '<div class="who">Signed in as ' + esc(S.user) + '.</div>';
 
+  if (d.onlyTo){
+    h += '<div class="note err"><b>Every message is being redirected to ' + esc(d.onlyTo) +
+      '.</b> No form teacher is receiving anything, whatever the switch below says. This is ' +
+      'a test setting &mdash; clear <i>Early dismissal email &mdash; send only to</i> in ' +
+      '&#9881;&#65039; Config when you have finished testing. A redirect left on looks ' +
+      'exactly like a system that is working.</div>';
+  }
+
   h += d.sendingOn
     ? '<div class="note ok"><b>Automatic sending is on.</b> Notices and reminders go out ' +
       'each afternoon. To stop them, set <i>Early dismissal email &mdash; send</i> in ' +

@@ -150,10 +150,23 @@ function readToken(){
   return '';
 }
 
+/* Read the reply as TEXT and parse it here, so "the network failed" and "the
+   server answered something that was not JSON" are different errors. r.json()
+   collapses them into one, and they need different words. */
 function api(p){
   return fetch(GAS_URL,{method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify(p)}).then(function(r){ return r.json(); });
+    body:JSON.stringify(p)})
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      try { return JSON.parse(t); }
+      catch(e){
+        var err = new Error('The server answered with something that is not a reply: ' +
+                            String(t).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,140));
+        err.notJson = true;
+        throw err;
+      }
+    });
 }
 
 function show(html){ view.innerHTML = html; }
@@ -240,12 +253,48 @@ function submit(btn, choice){
       if (res.alreadyDone) return already(res);
       done(res);
     })
-    .catch(function(){
-      for (var i=0;i<bs.length;i++) bs[i].disabled = false;
-      btn.innerHTML = was;
-      view.insertBefore(noteEl('err','Could not reach the Discipline Committee system. ' +
-        'Nothing has been recorded &mdash; try the link again in a few minutes.'), view.firstChild);
+    .catch(function(err){
+      /* THE WRITE MAY WELL HAVE LANDED. A failure here means the reply went
+         missing, which tells us nothing about what the server did with the
+         request. Saying "nothing has been recorded" would be a guess, and it
+         would be the exact lie this whole project exists to avoid. So go and
+         look before saying anything. */
+      api({action:'slipPeek', token:TOKEN})
+        .then(function(r){
+          if (r && r.ok && r.outcome && r.outcome !== 'Awaiting') return landed(r);
+          lost(err, bs, btn, was);
+        })
+        .catch(function(){ lost(err, bs, btn, was); });
     });
+}
+
+/* The reply was lost but the record is there. It worked; only the answer was
+   mislaid. Say so plainly rather than showing a success the teacher did not see
+   happen. */
+function landed(r){
+  progress(100);
+  show('<div class="centre">' +
+    '<div class="tick"><svg viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 7"/></svg></div>' +
+    '<h2>Recorded.</h2></div>' +
+    '<div class="note warn">The confirmation was slow coming back, so this page checked ' +
+      'again. It did go through &mdash; nothing needs doing twice.</div>' +
+    '<div class="rec"><div><b>' + esc(r.name) + '</b>, ' + esc(r.cls) + ' &mdash; ' +
+      esc(r.outcome) + '.</div>' +
+      (r.ackBy ? '<div class="last">Recorded from the link sent to ' + esc(r.ackBy) +
+        (r.ackOn ? ', ' + esc(r.ackOn) : '') + '.</div>' : '') +
+    '</div>' +
+    '<p class="hint">You can close this page.</p>' + foot());
+}
+
+function lost(err, bs, btn, was){
+  for (var i=0;i<bs.length;i++) bs[i].disabled = false;
+  btn.innerHTML = was;
+  var why = (err && err.notJson)
+    ? 'The Discipline Committee system answered, but not with an answer this page ' +
+      'understands. Nothing has been recorded.'
+    : 'Could not reach the Discipline Committee system, and this page then checked ' +
+      'and found nothing recorded. Please try the link again in a few minutes.';
+  view.insertBefore(noteEl('err', why), view.firstChild);
 }
 
 function noteEl(kind, text){

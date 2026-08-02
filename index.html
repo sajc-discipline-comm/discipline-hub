@@ -249,6 +249,7 @@ table.etbl th:nth-child(4),table.etbl td:nth-child(4){width:11%}
 table.etbl th.c,table.etbl td.c{width:13%;white-space:nowrap}
 table.etbl th.n,table.etbl td.n{white-space:nowrap}
 .mailbox h3{margin-top:28px}
+.mailbox h3.first{margin-top:6px}
 tr.t5 td{background:var(--wash5)} tr.t4 td{background:var(--wash4)}
 tr.t3 td{background:var(--wash3)} tr.t2 td{background:var(--wash2)}
 
@@ -488,9 +489,9 @@ var AREAS = [
     match:function(x){ return x.cohort==='JC1' && (x.domain==='Latecoming' || x.domain==='Thursday privilege'); } },
   { key:'JC2 Latecoming', title:'JC2 Latecoming', built:true,
     match:function(x){ return x.cohort==='JC2' && (x.domain==='Latecoming' || x.domain==='Thursday privilege'); } },
-  { key:'JC1 Attendance', title:'JC1 Attendance', built:false,
+  { key:'JC1 Attendance', title:'JC1 Attendance', built:true,
     match:function(x){ return x.cohort==='JC1' && /^A\(/.test(x.domain); } },
-  { key:'JC2 Attendance', title:'JC2 Attendance', built:false,
+  { key:'JC2 Attendance', title:'JC2 Attendance', built:true,
     match:function(x){ return x.cohort==='JC2' && /^A\(/.test(x.domain); } }
 ];
 function areaOf(key){ for (var i=0;i<AREAS.length;i++) if (AREAS[i].key===key) return AREAS[i]; return null; }
@@ -537,6 +538,33 @@ function toSchedule(key){
 }
 
 function sevClass(t){ return t>=5?'t5':t===4?'t4':t===3?'t3':t>=1?'t2':''; }
+
+/* WHAT A DOMAIN IS CALLED IN A SENTENCE. ⚙️ Statuses carries the label, so
+   'A(WOR)' can become 'absence without a valid reason' in an email to sixty
+   form teachers without a word of it living in this file. Thursday privilege
+   is not a status, so it is named here and nowhere else. */
+function domainLabel(domain){
+  if (domain === 'Thursday privilege') return 'Thursday privilege';
+  var list = (S.snap && S.snap.statuses) || [];
+  for (var i=0;i<list.length;i++){
+    if (String(list[i].ladder||'').trim() === domain && list[i].label) return list[i].label;
+    if (String(list[i].code||'').trim() === domain && list[i].label) return list[i].label;
+  }
+  return domain;
+}
+
+/* Which ladders an area actually contains, worst first — an attendance area
+   holds two, and a latecoming area holds two as well once somebody reaches
+   the Thursday counter. Read from the rows, never assumed. */
+function domainsIn(key){
+  var seen = {}, order = [];
+  rowsFor(key).forEach(function(x){ if (!seen[x.domain]){ seen[x.domain]=1; order.push(x.domain); } });
+  return order.sort(function(a,b){
+    if (a === 'Thursday privilege') return 1;      // always last: it is a footnote
+    if (b === 'Thursday privilege') return -1;
+    return a.localeCompare(b);
+  });
+}
 
 /* ── dates and text ───────────────────────────────────────────────────── */
 var MONTHS=['January','February','March','April','May','June','July','August',
@@ -815,10 +843,7 @@ function lcRow(x, i){
     '<div class="body"><div class="p">' + esc(x.name) + '</div>' +
     '<div class="meta">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) +
       (thu ? ' <span class="tag thu">Thursday privilege</span>' : '') + '</div>' +
-    '<div class="s">' + (thu
-        ? esc(x.term) + ' separate Thursdays &mdash; latest <b>' + esc(longish(x.last)) + '</b>'
-        : ordinal(x.term) + ' latecoming offence on <b>' + esc(longish(x.last)) + '</b>') +
-      '</div></div>' +
+    '<div class="s">' + lineFor(x) + '</div></div>' +
     statHtml(x) +
     '<div class="tierslot"><span class="tag ' + (thu ? 'quiet' : cls) + '">' +
       /* A one-rung ladder has no tiers to compare, so a "Tier 1" beside a
@@ -839,6 +864,19 @@ function lcRow(x, i){
 function goHtml(x){
   return '<div class="rowgo opn" data-open="' + esc(x.entryId) + '" title="Open ' + esc(x.name) + '">' +
     '<span class="lbl">Open</span><span class="chev">&rarr;</span></div>';
+}
+
+/* One sentence per row, in the vocabulary of its own ladder. "7th latecoming
+   offence" is right for lates and wrong for everything else — an absence is
+   not an offence you commit a seventh time, it is a count that has reached a
+   threshold. */
+function lineFor(x){
+  if (x.domain === 'Thursday privilege')
+    return esc(x.term) + ' separate Thursdays &mdash; latest <b>' + esc(longish(x.last)) + '</b>';
+  if (x.domain === 'Latecoming')
+    return ordinal(x.term) + ' latecoming offence on <b>' + esc(longish(x.last)) + '</b>';
+  return esc(x.term) + ' &times; <b>' + esc(x.domain) + '</b> this term &mdash; latest ' +
+         esc(longish(x.last));
 }
 
 function heldRow(x){
@@ -864,15 +902,23 @@ function laddersFor(domain){
     return String(l.ladder || l.domain || '').trim() === domain;
   }).sort(function(a,b){ return (Number(a.tier)||0) - (Number(b.tier)||0); });
 }
-function legendHtml(key){
-  var L = laddersFor('Latecoming');
+/* THE LEGEND IS PER LADDER, and an area can hold two. Printing latecoming's
+   tiers under a table of absences was the bug this replaces — it said, in an
+   email to form teachers, that tier 5 means something it does not. */
+function legendFor(domain){
+  var L = laddersFor(domain);
   if (!L.length) return '';
-  return '<div class="legend"><div class="lt">What each tier means &mdash; as 🪜 Ladders reads today</div>' +
+  return '<div class="legend"><div class="lt">' + esc(domain) +
+      ' &mdash; what each tier means, as 🪜 Ladders reads today</div>' +
     L.map(function(l){
       var t = Number(l.tier)||0;
       return '<div class="li"><b class="' + sevClass(t) + '">Tier ' + t + '</b>' +
         '<span>' + esc(l.action || '') + '</span></div>';
     }).join('') + '</div>';
+}
+function legendHtml(key){
+  return domainsIn(key).filter(function(d){ return d !== 'Thursday privilege'; })
+    .map(legendFor).join('');
 }
 
 /* ── one student ──────────────────────────────────────────────────────── */
@@ -1224,6 +1270,42 @@ function picked(){
 function pickedLates(){ return picked().filter(function(x){ return x.domain !== 'Thursday privilege'; }); }
 function pickedThu(){   return picked().filter(function(x){ return x.domain === 'Thursday privilege'; }); }
 
+/* ONE BLOCK PER LADDER, in the order the area holds them. The email was
+   special-cased for latecoming plus a Thursday footnote; an attendance area
+   has two ladders with different tiers and different sentences, and merging
+   them into one table would repeat the mistake the Thursday block was split
+   out to fix. */
+function emailGroups(){
+  var rows = picked(), by = {}, order = [];
+  rows.forEach(function(x){
+    if (!by[x.domain]){ by[x.domain] = []; order.push(x.domain); }
+    by[x.domain].push(x);
+  });
+  order.sort(function(a,b){
+    if (a === 'Thursday privilege') return 1;
+    if (b === 'Thursday privilege') return -1;
+    return a.localeCompare(b);
+  });
+  return order.map(function(d){
+    var list = by[d];
+    var lo = Math.min.apply(null, list.map(function(x){ return x.term; }));
+    var hi = Math.max.apply(null, list.map(function(x){ return x.term; }));
+    return { domain:d, rows:list, lo:lo, hi:hi, thu:(d === 'Thursday privilege') };
+  });
+}
+
+/* The sentence above each table. Occasions for a count, not "offences" —
+   an absence with a parent's letter is not an offence and the email should
+   not call it one. */
+function introFor(g){
+  if (g.thu) return THU_PARA;
+  var range = (g.lo === g.hi) ? ('on ' + g.lo + ' occasions') : ('on ' + g.lo + ' to ' + g.hi + ' occasions');
+  if (g.domain === 'Latecoming')
+    return 'The following students have been late ' + range + ' this term. Please follow up accordingly.';
+  return 'The following students have been recorded as ' + domainLabel(g.domain) + ' &mdash; ' +
+         g.domain + ' &mdash; ' + range + ' this term. Please follow up accordingly.';
+}
+
 function recipients(){
   var out = [], seen = {}, absent = [], noIds = [], unresolved = [], noClass = [];
   if (!S.teachers) return { list:[], absent:[], noIds:[], unresolved:[], noClass:[], ready:false };
@@ -1364,38 +1446,36 @@ function diagHtml(){
   '</div>';
 }
 
-function emailBody(){
-  var rows = pickedLates(), thu = pickedThu();
-  var lines = ['Dear Form Teachers,', ''];
+function subjectLine(){
+  var ds = emailGroups().filter(function(g){ return !g.thu; }).map(function(g){ return g.domain; });
+  var what = ds.length ? ds.join(' and ') : 'Thursday privilege';
+  return what + ' follow-up — ' + areaOf(S.area).title + ' — ' + todayLong();
+}
 
-  if (rows.length){
-    var lo = Math.min.apply(null, rows.map(function(x){ return x.term; }));
-    var hi = Math.max.apply(null, rows.map(function(x){ return x.term; }));
-    lines.push('The following students have been late ' +
-      (lo === hi ? 'on ' + lo + ' occasions' : 'on ' + lo + ' to ' + hi + ' occasions') +
-      ' this term. Please follow up accordingly.');
+function plain(html){ return String(html).replace(/<[^>]+>/g,'').replace(/&mdash;/g,'—')
+  .replace(/&middot;/g,'·').replace(/&amp;/g,'&').replace(/&times;/g,'×'); }
+
+function emailBody(){
+  var lines = ['Dear Form Teachers,', ''];
+  emailGroups().forEach(function(g){
+    if (g.thu) lines.push('THURSDAY PRIVILEGE');
+    else lines.push(g.domain.toUpperCase() + ' — ' + domainLabel(g.domain).toUpperCase());
+    lines.push(plain(introFor(g)) + (g.thu ? ' This is counted in Thursdays, not in lates.' : ''));
     lines.push('');
-    rows.forEach(function(x){
-      lines.push(x.name + '  |  ' + x.cls + '  |  ' + x.term + ' this term (' + x.year + ' this year)' +
-                 '  |  Tier ' + x.tier);
-      lines.push('    Dates: ' + (shortDates(x.dates) || '—'));
-      lines.push('    ' + x.action);
+    g.rows.forEach(function(x){
+      if (g.thu){
+        lines.push(x.name + '  |  ' + x.cls + '  |  ' + x.term + ' separate Thursdays' +
+                   '  |  Thursday privilege removed');
+        lines.push('    Thursdays: ' + (shortDates(x.dates) || '—'));
+      } else {
+        lines.push(x.name + '  |  ' + x.cls + '  |  ' + x.term + ' this term (' + x.year + ' this year)' +
+                   '  |  Tier ' + x.tier);
+        lines.push('    Dates: ' + (shortDates(x.dates) || '—'));
+        lines.push('    ' + x.action);
+      }
       lines.push('');
     });
-  }
-
-  if (thu.length){
-    lines.push('THURSDAY PRIVILEGE');
-    lines.push(THU_PARA + ' This is counted in Thursdays, not in lates.');
-    lines.push('');
-    thu.forEach(function(x){
-      lines.push(x.name + '  |  ' + x.cls + '  |  ' + x.term + ' separate Thursdays' +
-                 '  |  Thursday privilege removed');
-      lines.push('    Thursdays: ' + (shortDates(x.dates) || '—'));
-    });
-    lines.push('');
-  }
-
+  });
   lines.push('Thank you,');
   lines.push(S.user);
   lines.push('Discipline Committee');
@@ -1403,9 +1483,9 @@ function emailBody(){
 }
 
 function emailHtml(){
-  var rows = pickedLates(), thu = pickedThu(), all = picked();
+  var all = picked();
   var r = recipients();
-  var subject = 'Latecoming follow-up — ' + areaOf(S.area).title + ' — ' + todayLong();
+  var subject = subjectLine();
 
   var warn = '';
   if (S.tLoading){
@@ -1451,39 +1531,43 @@ function emailHtml(){
 
   var addr = r.list.map(function(p){ return p.email; }).join('; ');
 
-  /* ONE TABLE SHAPE FOR BOTH BLOCKS. Student, Class, a right-aligned count,
-     a chip, then the dates — so the two halves of the message read as one
+  /* ONE TABLE SHAPE FOR EVERY BLOCK. Student, Class, a right-aligned count,
+     a chip, then the dates — so a message carrying two ladders reads as one
      message rather than two things stapled together. */
-  var table = rows.length
-    ? '<p>The following students have been late this term. Please follow up accordingly.</p>' +
-      '<table class="etbl"><thead><tr><th>Student</th><th>Class</th><th class="n">This term</th>' +
-      '<th class="n">This year</th><th class="c">Tier</th><th>Dates</th></tr></thead><tbody>' +
-      rows.map(function(x){
-        return '<tr class="' + sevClass(x.tier) + '"><td>' + esc(x.name) + '</td><td>' + esc(x.cls) + '</td>' +
-          '<td class="n">' + x.term + '</td><td class="n">' + x.year + '</td>' +
-          '<td class="c"><span class="chip ' + sevClass(x.tier) + '">Tier ' + x.tier + '</span></td>' +
-          '<td>' + esc(shortDates(x.dates) || '—') + '</td></tr>';
-      }).join('') + '</tbody></table>'
-    : '';
+  var groups = emailGroups();
+  var body = groups.map(function(g, i){
+    var head = (groups.length > 1 || g.thu)
+      ? '<h3' + (i ? '' : ' class="first"') + '>' + esc(g.thu ? 'Thursday privilege' : g.domain) + '</h3>'
+      : '';
+    var intro = '<p>' + introFor(g) + (g.thu ? ' <b>This is counted in Thursdays, not in lates.</b>' : '') + '</p>';
 
-  var thuBlock = thu.length
-    ? '<h3>Thursday privilege</h3>' +
-      '<p>' + THU_PARA + ' <b>This is counted in Thursdays, not in lates.</b></p>' +
-      '<table class="etbl"><thead><tr><th>Student</th><th>Class</th><th class="n">Thursdays</th>' +
-      '<th class="c">Outcome</th><th>Dates</th></tr></thead><tbody>' +
-      thu.map(function(x){
-        return '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.cls) + '</td>' +
-               '<td class="n">' + x.term + '</td>' +
-               '<td class="c"><span class="chip none">Privilege removed</span></td>' +
-               '<td>' + esc(shortDates(x.dates) || '—') + '</td></tr>';
-      }).join('') + '</tbody></table>'
-    : '';
+    var head2 = g.thu
+      ? '<th class="n">Thursdays</th><th class="c">Outcome</th>'
+      : '<th class="n">This term</th><th class="n">This year</th><th class="c">Tier</th>';
+
+    var tbl = '<table class="etbl' + (g.thu ? ' thu' : '') + '"><thead><tr>' +
+      '<th>Student</th><th>Class</th>' + head2 + '<th>Dates</th></tr></thead><tbody>' +
+      g.rows.map(function(x){
+        var mid = g.thu
+          ? '<td class="n">' + x.term + '</td>' +
+            '<td class="c"><span class="chip none">Privilege removed</span></td>'
+          : '<td class="n">' + x.term + '</td><td class="n">' + x.year + '</td>' +
+            '<td class="c"><span class="chip ' + sevClass(x.tier) + '">Tier ' + x.tier + '</span></td>';
+        return '<tr class="' + (g.thu ? '' : sevClass(x.tier)) + '">' +
+          '<td>' + esc(x.name) + '</td><td>' + esc(x.cls) + '</td>' + mid +
+          '<td>' + esc(shortDates(x.dates) || '—') + '</td></tr>';
+      }).join('') + '</tbody></table>' +
+      (g.thu ? '' : legendFor(g.domain));
+
+    return head + intro + tbl;
+  }).join('');
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="appbar"><a data-go="lc">&larr; ' + esc(areaOf(S.area).title) + '</a></div>' +
     '<h1>Today\'s email</h1>' +
-    '<div class="who">' + rows.length + ' late student' + (rows.length===1?'':'s') +
-      (thu.length ? ', ' + thu.length + ' Thursday privilege' : '') + ', ' +
+    '<div class="who">' + groups.map(function(g){
+        return g.rows.length + ' ' + (g.thu ? 'Thursday privilege' : g.domain);
+      }).join(', ') + ' &middot; ' +
       r.list.length + ' recipient' + (r.list.length===1?'':'s') + '.</div>' +
     warn +
     '<div class="mailto"><div><b>To</b> ' + esc(r.list.map(function(p){
@@ -1495,8 +1579,7 @@ function emailHtml(){
       '<button id="copybody" class="ghost sm">Copy the message</button>' +
       '<button id="outlook">Open Outlook and copy the message</button>' +
     '</div>' +
-    '<div class="mailbox"><p>Dear Form Teachers,</p>' +
-      table + thuBlock + (rows.length ? legendHtml(S.area) : '') + '</div>' +
+    '<div class="mailbox"><p>Dear Form Teachers,</p>' + body + '</div>' +
     '<div class="note q"><b>Copying records nothing.</b> The follow-up is only written down when ' +
       'you confirm below that the email has actually gone.</div>' +
     '<div class="stack rowwise">' +
@@ -1517,7 +1600,7 @@ function record(){
   /* actionTaken is always sent, and it is the tier's own wording — so the
      record says what was asked of the form teacher, not merely that somebody
      was emailed. One batch, one sentence, because one email covers them all. */
-  var action = 'Daily latecoming email to form teachers — ' + areaOf(S.area).title;
+  var action = 'Daily follow-up email to form teachers — ' + areaOf(S.area).title;
 
   api('hubStamp', {
     token: TOKEN,
@@ -1625,7 +1708,7 @@ function fallbackCopy(text){
    carry a table is not reliable anywhere. Click, Ctrl+V, send. */
 function openOutlook(){
   var r = recipients();
-  var subject = 'Latecoming follow-up — ' + areaOf(S.area).title + ' — ' + todayLong();
+  var subject = subjectLine();
   copy(emailBody(), $('outlook'));
   var to = r.list.map(function(p){ return p.email; }).join(';');
   var url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject);

@@ -366,7 +366,7 @@ table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
 (function(){
 'use strict';
 
-var GAS_URL = 'https://script.google.com/macros/s/AKfycbzEviXmBucgufueIuXLJS2YnKsIiYFoT0g1F2wtMHNBAdUiwKIyFS17Bqdq7rBpGMv5FA/exec';
+var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3ZySAGT4LHV-R4KfB00PGdXL8fu569vrvvUUpzxF8nrhyIw/exec';
 
 /* The other tools in the project. One bookmark instead of four. */
 var TOOLS = [
@@ -615,7 +615,16 @@ function signIn(){
       S.busy = false; S.view = 'menu'; render(true);
     });
   }).catch(function(){
-    S.busy=false; S.err='Could not reach the server. Check the connection and try again.'; render();
+    S.busy = false;
+    /* NAME THE ADDRESS THAT FAILED. "Could not reach the server" is true and
+       useless: the three real causes need three different actions, and two of
+       them are invisible unless the URL is on screen. */
+    S.err = 'Could not reach the server at ' + GAS_URL + ' — nothing was sent. ' +
+            'Three things cause this: the deployment at that address no longer exists ' +
+            '(check Deploy → Manage deployments — a NEW deployment issues a different ' +
+            '/exec and leaves this one stranded); the page is being opened straight from ' +
+            'your disk rather than from its web address; or the connection is down.';
+    render();
   });
 }
 
@@ -1273,8 +1282,26 @@ function diagHtml(){
   /* WHICH CLASSES HAVE TEACHERS AND WHICH DO NOT is the single most useful
      line here: if every class with teachers is one intake year and every
      class without is the other, the fault is one tab, not fifteen rows. */
+  /* Round 4's counts, when the deployment has them. Three numbers that say
+     which of three conversations to have — far better than anything the Hub
+     can infer from an empty map. */
+  var c = S.teachers && S.teachers.counts;
+  var src = S.teachers && S.teachers.source;
+  var notes = (S.teachers && S.teachers.notes) || [];
+
   var why;
-  if (!have.length){
+  if (c && !c.teachersActive){
+    why = 'The Teachers tab was read and yielded <b>no Active rows at all</b> ' +
+          '(' + c.classes + ' classes found). The <b>Status</b> column must read exactly ' +
+          '<b>Active</b> — that is the whole filter.';
+  } else if (c && c.teachersActive && !c.withTeachers){
+    why = 'The teacher list is fine &mdash; <b>' + c.teachersActive + ' Active teachers</b> &mdash; ' +
+          'and <b>' + c.classes + ' classes</b> were found, but <b>not one of them has a teacher</b>. ' +
+          'That is one fault, not ' + c.classes + '. It is the <b>CT 1 / CT 2 / CTA 1 / CTA 2</b> ' +
+          'columns of Class Allocations.';
+  } else if (c && !c.classes){
+    why = 'Class Allocations was found but is <b>empty</b> &mdash; no rows yielding a class code.';
+  } else if (!have.length){
     /* Confirmed against readClassTeachers_ on 2 August: it filters on NOTHING.
        No year, no cohort, no status on the class row. It opens a tab named
        exactly 'Class Allocations', reads the class code from column B, and
@@ -1321,6 +1348,16 @@ function diagHtml(){
              (emptyT.length>10 ? ' +' + (emptyT.length-10) + ' more' : '') : '') + '</div>'
         : '<i>no classes at all</i>') +
     '</div></div>' +
+    (c ? '<div class="drow"><b>What the server counted</b><div>' +
+      '<span class="dchip ' + (c.classes ? 'ok' : 'bad') + '">' + c.classes + '</span> classes &nbsp; ' +
+      '<span class="dchip ' + (c.withTeachers ? 'ok' : 'warn') + '">' + c.withTeachers + '</span> with a teacher &nbsp; ' +
+      '<span class="dchip ' + (c.teachersActive ? 'ok' : 'bad') + '">' + c.teachersActive + '</span> Active teachers' +
+      (src ? '<div class="dline">Read from <b>' + esc(src.classAllocations || '?') + '</b> and <b>' +
+             esc(src.teachers || '?') + '</b></div>' : '') +
+    '</div></div>' : '') +
+    (notes.length ? '<div class="drow"><b>The server also noted</b><div>' +
+      notes.map(function(n){ return '<div class="dline">' + esc(n) + '</div>'; }).join('') +
+    '</div></div>' : '') +
     '<div class="drow"><b>What that means</b><div class="dwhy">' + why + '</div></div>' +
     '<div class="stack rowwise" style="margin-top:10px">' +
       '<button class="plain" id="hidediag">Hide</button></div>' +
@@ -1696,7 +1733,11 @@ function loadTeachers(){
   return api('hubTeachers', { token: TOKEN }).then(function(res){
     S.tLoading = false;
     if (res && res.ok){
-      S.teachers = { byClass: res.byClass || {}, unresolvedByClass: res.unresolvedByClass || {} };
+      S.teachers = { byClass: res.byClass || {}, unresolvedByClass: res.unresolvedByClass || {},
+                     /* Round 4. Absent on an older deployment — everything below
+                        degrades to the counts the Hub can work out for itself. */
+                     counts: res.counts || null, source: res.source || null,
+                     notes: res.notes || [] };
       S.tErr = '';
     } else {
       S.teachers = null;

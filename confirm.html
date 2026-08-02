@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<!--
+  ==========================================================================
+  ACKNOWLEDGE A DOCUMENT — the page an early dismissal email links to
+  ==========================================================================
+  Built 2 August 2026. Published in sajc-discipline-comm/discipline-hub as
+  confirm.html. A change here is a commit; no redeploy, ever.
+
+  THIS PAGE IS READ BY FORM TEACHERS, who have no access to any tracker and
+  have never seen the Hub. It is the only screen in this project a person
+  outside the Discipline Committee will ever open. It therefore looks like
+  the green slip form rather than the Hub, is legible on a phone, and asks
+  exactly one question.
+
+  WHAT IT WRITES. One cell: the outcome of one early dismissal. Nothing else.
+  It cannot see the Log, cannot see another student, cannot change what the
+  General Office recorded, and cannot undo itself — only the committee can.
+
+  WHY THE LINK IS NOT AN /exec ADDRESS. An /exec URL fails with "unable to
+  open file" in any browser signed into more than one Google account, which
+  is most staff phones. Tested 2 August 2026.
+
+  WHY THE TOKEN LIVES AFTER THE #. A URL fragment is never sent to any
+  server — not to GitHub, not in a Referer, not into a proxy's log. It
+  reaches only the script on this page, which posts it to /exec in a request
+  body. The project's rule that a token travels in a body, honoured on the
+  one surface that looked like it broke it.
+
+  WHY NOTHING HAPPENS UNTIL A BUTTON IS PRESSED. School mail scanners
+  pre-fetch links. Opening this page performs a read and nothing else.
+
+  WHAT THIS PAGE MAY NEVER SAY. It records that somebody holding this link
+  pressed a button. Not that the form teacher did. Every line of copy says
+  "from the link sent to ..." for that reason, and it must stay that way.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#27326a">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Early dismissal &middot; SAJC Discipline Committee</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --accent:#27326a; --accent-deep:#1b2450; --accent-tint:#e8eaf3;
+  --paper:#f7f5f1; --raised:#fffdfa; --line:#e4ded4;
+  --ink:#1b1e2b; --muted:#6e7180;
+  --good:#2f6b4f; --good-tint:#e6f0ea;
+  --warn:#8a5a12; --warn-tint:#f7edda;
+  --bad:#9d372e;  --bad-tint:#f7e8e5;
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Public Sans',system-ui,-apple-system,"Segoe UI",sans-serif;font-size:17px;
+  line-height:1.55;letter-spacing:-.005em;color:var(--ink);background:var(--paper);
+  -webkit-text-size-adjust:100%;min-height:100vh;display:flex;flex-direction:column}
+h1,h2{font-family:'Fraunces',Georgia,serif;font-weight:600;letter-spacing:-.018em;line-height:1.12}
+h1{font-variation-settings:'opsz' 90,'SOFT' 20,'WONK' 1;font-size:36px;margin:0 0 8px}
+h2{font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;font-size:28px;margin:0 0 8px}
+
+.prog{height:2px;background:rgba(39,50,106,.10);flex:0 0 auto}
+.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .55s var(--ease)}
+.top{flex:0 0 auto;padding:14px 24px 0;display:flex;align-items:center;
+  justify-content:space-between;min-height:44px}
+.brand{font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 14,'SOFT' 40,'WONK' 1;
+  font-weight:600;font-size:14.5px;color:var(--accent)}
+.brand em{font-style:normal;color:var(--muted);font-weight:400}
+
+.pane{flex:1 1 auto;padding:18px 24px 34px;max-width:560px;width:100%;margin:0 auto;
+  animation:rise .42s var(--ease) both}
+@keyframes rise{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+
+.eyebrow{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.14em;
+  color:var(--muted);margin:0 0 10px}
+.sub{color:var(--muted);font-size:16px;margin:0}
+.lede{color:var(--muted);font-size:15.5px;margin:0 0 24px;max-width:38ch}
+
+.rec{background:var(--raised);border:1px solid var(--line);border-radius:11px;
+  padding:16px 20px;margin:20px 0 4px;font-size:15.5px;line-height:1.65}
+.rec div{margin:2px 0}
+.rec b{font-weight:600}
+.rec .last{color:var(--muted);font-size:14.5px;margin-top:8px;padding-top:10px;
+  border-top:1px solid var(--line)}
+
+.stack{display:flex;flex-direction:column;gap:9px;margin-top:22px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:11px;border:0;
+  border-radius:11px;background:var(--accent);color:#fff;font:inherit;font-weight:600;
+  font-size:16.5px;padding:15px 24px;cursor:pointer;text-align:center;
+  box-shadow:0 1px 2px rgba(27,30,43,.14),0 6px 18px -8px rgba(39,50,106,.55);
+  transition:transform .16s var(--ease),box-shadow .22s var(--ease),background .2s}
+.btn:hover{background:var(--accent-deep);transform:translateY(-1.5px)}
+.btn:active{transform:translateY(1px);box-shadow:0 1px 2px rgba(27,30,43,.16)}
+.btn:disabled{opacity:.55;transform:none;box-shadow:none;cursor:default}
+.btn.wide{width:100%}
+.btn.quiet{background:transparent;color:var(--accent);box-shadow:none;border:1.5px solid var(--line)}
+.btn.quiet:hover{background:var(--accent-tint);border-color:transparent}
+
+.note{padding:13px 16px;border-radius:11px;font-size:14.5px;margin-bottom:18px;
+  border-left:3px solid var(--muted);background:#efece6;line-height:1.5}
+.note b{font-weight:600}
+.note.err{background:var(--bad-tint);color:var(--bad);border-color:var(--bad)}
+.note.warn{background:var(--warn-tint);color:var(--warn);border-color:var(--warn)}
+.note.ok{background:var(--good-tint);color:var(--good);border-color:var(--good)}
+
+.tick{width:74px;height:74px;border-radius:50%;background:var(--good-tint);display:grid;
+  place-items:center;margin:0 auto 20px;animation:pop .55s var(--ease) backwards .08s}
+.tick svg{width:34px;height:34px;stroke:var(--good);stroke-width:2.6;fill:none;
+  stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:32;stroke-dashoffset:32;
+  animation:draw .5s var(--ease) forwards .3s}
+@keyframes pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+@keyframes draw{to{stroke-dashoffset:0}}
+.centre{text-align:center}
+
+.hint{font-size:12.5px;color:var(--muted);margin-top:18px;line-height:1.5}
+.foot{font-size:12.5px;color:var(--muted);margin-top:26px;padding-top:14px;
+  border-top:1px solid var(--line);line-height:1.5}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="prog"><i id="bar"></i></div>
+<div class="top"><div class="brand">SAJC Discipline Committee <em id="hdrSub"></em></div></div>
+<div class="pane" id="view"><p class="lede">Loading&hellip;</p></div>
+
+<script>
+var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3ZySAGT4LHV-R4KfB00PGdXL8fu569vrvvUUpzxF8nrhyIw/exec';
+
+var view = document.getElementById('view');
+var bar  = document.getElementById('bar');
+var TOKEN = readToken();
+var REC = null;
+
+function esc(s){ return String(s===null||s===undefined?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+function progress(p){ bar.style.width = p + '%'; }
+
+function readToken(){
+  var h = String(location.hash||'').replace(/^#/,'');
+  var parts = h.split('&');
+  for (var i=0;i<parts.length;i++){
+    var kv = parts[i].split('=');
+    if (kv[0]==='t') return decodeURIComponent(kv.slice(1).join('='));
+  }
+  return '';
+}
+
+function api(p){
+  return fetch(GAS_URL,{method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify(p)}).then(function(r){ return r.json(); });
+}
+
+function show(html){ view.innerHTML = html; }
+
+function foot(){
+  return '<div class="foot">This page records one acknowledgement and nothing else. It never ' +
+    'asks you to upload anything and never asks for a password. Only the Discipline Committee ' +
+    'can change what it records.</div>';
+}
+
+function dead(msg){
+  progress(100);
+  show('<p class="eyebrow">Early dismissal</p>' +
+    '<div class="note err"><b>' + esc(msg) + '</b></div>' +
+    '<p class="lede">Nothing has been recorded. If you were expecting to acknowledge ' +
+    'something, please write to <a href="mailto:discipline@sajc.edu.sg">discipline@sajc.edu.sg</a> ' +
+    'and say which student it was.</p>' + foot());
+}
+
+/* ── load: a READ, never a write. Safe for a scanner to perform. ─────────── */
+progress(35);
+if (!TOKEN){
+  dead('This link is incomplete.');
+} else {
+  api({action:'slipPeek', token:TOKEN})
+    .then(function(r){
+      progress(75);
+      if (!r || !r.ok) return dead((r && r.error) || 'This link is no longer valid.');
+      REC = r;
+      if (r.teacherName) document.getElementById('hdrSub').textContent = '· ' + r.teacherName;
+      if (r.outcome && r.outcome !== 'Awaiting') return already(r);
+      ask(r);
+    })
+    .catch(function(){
+      dead('Could not reach the Discipline Committee system just now.');
+    });
+}
+
+function ask(r){
+  progress(100);
+  show(
+    '<p class="eyebrow">Early dismissal &middot; acknowledgement</p>' +
+    '<h1>' + esc(r.name) + '</h1>' +
+    '<p class="sub">' + esc(r.cls) + '</p>' +
+    '<div class="rec">' +
+      '<div>Left school early on <b>' + esc(r.dateText) + '</b>.</div>' +
+      '<div>Reason recorded: <b>' + esc(r.reasonLabel) + '</b>.</div>' +
+      '<div class="last">Nothing has been recorded yet. You are not being asked to send ' +
+        'anything in &mdash; only to say when the document has reached you, so the case ' +
+        'can be closed.</div>' +
+    '</div>' +
+    '<div class="stack">' +
+      '<button class="btn wide" data-choice="mc">I have received ' + esc(r.name) + '&rsquo;s MC</button>' +
+      '<button class="btn wide" data-choice="letter">I have received a parent&rsquo;s letter</button>' +
+      '<button class="btn quiet wide" data-choice="notOwed">Nothing is owed &mdash; this was a medical appointment</button>' +
+    '</div>' +
+    '<p class="hint">If neither has reached you yet, close this page. The link stays valid ' +
+      'until <b>' + esc(r.expiresOn) + '</b>.<br>' +
+      'It was sent to ' + esc(r.teacherName || 'you') +
+      (r.teacherRole ? ' (' + esc(r.teacherRole) + ')' : '') +
+      ', covers this one student on this one date, and can show nothing else.</p>' +
+    foot()
+  );
+  var bs = view.querySelectorAll('button[data-choice]');
+  for (var i=0;i<bs.length;i++){
+    bs[i].addEventListener('click', function(){ submit(this, this.getAttribute('data-choice')); });
+  }
+}
+
+function submit(btn, choice){
+  var bs = view.querySelectorAll('button[data-choice]');
+  for (var i=0;i<bs.length;i++) bs[i].disabled = true;
+  var was = btn.innerHTML;
+  btn.innerHTML = 'Recording&hellip;';
+
+  api({action:'slipConfirm', token:TOKEN, choice:choice})
+    .then(function(res){
+      if (!res || !res.ok){
+        for (var i=0;i<bs.length;i++) bs[i].disabled = false;
+        btn.innerHTML = was;
+        view.insertBefore(noteEl('err', (res && res.error) || 'That could not be recorded.'), view.firstChild);
+        return;
+      }
+      if (res.alreadyDone) return already(res);
+      done(res);
+    })
+    .catch(function(){
+      for (var i=0;i<bs.length;i++) bs[i].disabled = false;
+      btn.innerHTML = was;
+      view.insertBefore(noteEl('err','Could not reach the Discipline Committee system. ' +
+        'Nothing has been recorded &mdash; try the link again in a few minutes.'), view.firstChild);
+    });
+}
+
+function noteEl(kind, text){
+  var d = document.createElement('div');
+  d.className = 'note ' + kind;
+  d.textContent = text;
+  return d;
+}
+
+function done(res){
+  var said = res.outcome === 'Queried — not owed'
+    ? 'You have told us nothing is owed for <b>' + esc(res.name) + '</b>, ' + esc(res.cls) +
+      ' &mdash; that this was a medical appointment. The committee will look at it.'
+    : '<b>' + esc(res.name) + '</b>, ' + esc(res.cls) + ' &mdash; ' +
+      esc(String(res.outcome).replace(' acknowledged','')) +
+      ' received. The committee can close this case.';
+
+  show('<div class="centre">' +
+    '<div class="tick"><svg viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 7"/></svg></div>' +
+    '<h2>Thank you.</h2></div>' +
+    '<div class="rec"><div>' + said + '</div>' +
+    '<div class="last">Recorded from the link sent to ' + esc(res.ackBy || '') +
+      (res.ackOn ? ', ' + esc(res.ackOn) : '') + '. ' +
+      'You will hear nothing further about it.</div></div>' +
+    '<p class="hint">You can close this page. If this was recorded in error, write to ' +
+    '<a href="mailto:discipline@sajc.edu.sg">discipline@sajc.edu.sg</a> &mdash; only the ' +
+    'committee can change it.</p>' + foot());
+  progress(100);
+}
+
+function already(r){
+  progress(100);
+  show('<p class="eyebrow">Early dismissal &middot; acknowledgement</p>' +
+    '<div class="note warn"><b>This has already been recorded' +
+      (r.ackOn ? ' on ' + esc(r.ackOn) : '') + '.</b> Nothing has changed.</div>' +
+    '<h2>' + esc(r.name || '') + '</h2>' +
+    (r.cls ? '<p class="sub">' + esc(r.cls) + '</p>' : '') +
+    '<div class="rec"><div>Recorded as <b>' + esc(r.outcome) + '</b>.</div>' +
+      (r.ackBy ? '<div class="last">From the link sent to ' + esc(r.ackBy) + '.</div>' : '') +
+    '</div>' +
+    '<p class="hint">If that is wrong, write to ' +
+    '<a href="mailto:discipline@sajc.edu.sg">discipline@sajc.edu.sg</a>.</p>' + foot());
+}
+</script>
+</body>
+</html>

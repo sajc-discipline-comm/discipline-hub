@@ -224,6 +224,16 @@ button.sm{font-size:14px;padding:9px 15px}
 .note.ok{border-color:var(--good);background:var(--good-tint);color:#22553f}
 .note.q{border-color:var(--accent);background:var(--accent-tint);color:var(--accent-deep)}
 .note b{font-weight:600}
+/* A confirmation that lives inside a note, rather than on its own screen —
+   used by early dismissal follow-up, where the question is about one row and
+   moving the page would lose which row it was. */
+.note .field{margin-top:14px;max-width:100%}
+.note .stack{margin-top:14px}
+.note .note{margin-top:12px}
+/* The right-hand column of a follow-up row: its state, and the one thing that
+   can be done about it. */
+.dside{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+@media (max-width:640px){ .dside{flex-direction:row;align-items:center} }
 
 .mailto{background:var(--raised);border:1px solid var(--line);border-radius:11px;padding:16px 20px;
   margin-top:16px;font-size:14px;line-height:1.65}
@@ -398,6 +408,12 @@ var S = {
   view:'signin', user:'', name:'', busy:false, err:'',
   snap:null,            // hubSnapshot's reply, whole
   det:null,             // hubDetention's reply, or null
+  /* hubDocuments' reply, or null. NULL MEANS "COULD NOT READ", NEVER "NONE" —
+     the menu must be able to say which, because an unreadable follow-up list
+     and an empty one look identical and mean opposite things. */
+  docs:null,
+  dask:null,            // entryId whose reversal is being confirmed
+  dto:'', dErr:'',      // where it is going, and why the last attempt failed
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
   student:null,         // { id, name, cls, cohort, domain, row } — who is open
@@ -663,13 +679,47 @@ function loadAll(){
     S.snap = res;
     return api('hubDetention', { token: TOKEN }).then(function(d){
       S.det = (d && d.ok) ? d : null;      // null = "we do not know what is booked"
-    }).catch(function(){ S.det = null; });
+    }).catch(function(){ S.det = null; })
+    .then(loadDocs);
   });
 }
 
+/* THIS ONE IS LIVE, AND THAT IS THE WHOLE DIFFERENCE. Every other count on the
+   menu comes from 📸 Snapshot, which rebuilds hourly and stamps its own age.
+   hubDocuments reads 📋 Log and 📄 Documents directly, every time, so this
+   answer has no age to print — it is simply now. Do not give this area a
+   builtHtml() stamp: it would be claiming a staleness the data does not have. */
+function loadDocs(){
+  return api('hubDocuments', { token: TOKEN }).then(function(r){
+    S.docs = (r && r.ok) ? r : null;
+  }).catch(function(){ S.docs = null; });
+}
+
+/* The six strings the server may return, byte for byte. TWO OF THEM CONTAIN AN
+   EM DASH and a hyphen in its place fails silently — the row would simply fall
+   through every branch and be filed under "acknowledged" without a word. They
+   are constants here so there is exactly one place to get them wrong, and a
+   test compares them against the handover's list character by character. */
+var DOC_AWAIT   = 'Awaiting';
+var DOC_MC      = 'MC acknowledged';
+var DOC_LETTER  = "Parent's letter acknowledged";   // STRAIGHT apostrophe, as delivered
+var DOC_QUERIED = 'Queried — not owed';
+var DOC_CLOSED  = 'Closed by committee';
+var DOC_RECEIPT = 'Receipt only — nothing owed';
+var DOC_OUTCOMES = [DOC_AWAIT, DOC_MC, DOC_LETTER, DOC_QUERIED, DOC_CLOSED, DOC_RECEIPT];
+window.__hubOutcomes = DOC_OUTCOMES;   // so a test can compare them character by character
+
+function docRows(){ return (S.docs && S.docs.rows) || []; }
+function docsHanded(){ return docRows().filter(function(x){ return x.outcome===DOC_AWAIT && x.handedOn; }); }
+function docsOpen(){   return docRows().filter(function(x){ return x.outcome===DOC_AWAIT && !x.handedOn; }); }
+function docsSettled(){ return docRows().filter(function(x){
+  return x.outcome!==DOC_AWAIT && x.outcome!==DOC_RECEIPT; }); }
+function docsReceipts(){ return docRows().filter(function(x){ return x.outcome===DOC_RECEIPT; }); }
+
 function signOut(){
   TOKEN=null; S.teachers=null;
-  S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
+  S.view='signin'; S.snap=null; S.det=null; S.docs=null; S.sel={}; S.stamped={}; S.user='';
+  S.dask=null; S.dto=''; S.dErr='';
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   render(true);
@@ -703,6 +753,7 @@ function render(moved){
   else if (S.view==='email')  html = emailHtml();
   else if (S.view==='sent')   html = sentHtml();
   else if (S.view==='student') html = studentHtml();
+  else if (S.view==='docs')   html = docsHtml();
   else if (S.view==='soon')   html = soonHtml();
   v.innerHTML = html;
   if (moved){ v.scrollTop = 0; } else { v.scrollTop = keep; }
@@ -753,6 +804,26 @@ function menuHtml(){
     '</div>';
   }).join('');
 
+  /* Early dismissal follow-up. NOT a snapshot area — see loadDocs. The two
+     numbers are deliberately not summed: "with the committee" is the half the
+     machine has given up on, and a single total would let three abandoned
+     students hide inside a quiet-looking twelve. */
+  if (!S.docs){
+    rows += '<div class="mrow" data-area="__docs"><div class="mt">Early dismissal follow-up' +
+      '<em>the follow-up records could not be read &mdash; open it for the reason</em></div></div>';
+  } else {
+    var dOpen = docsOpen().length, dHanded = docsHanded().length;
+    var redirect = S.docs.onlyTo
+      ? '<em>&#9888; every message is being redirected to ' + esc(S.docs.onlyTo) +
+        ' &mdash; no form teacher is receiving anything</em>'
+      : (S.docs.sendingOn ? '' : '<em>automatic sending is off &mdash; nothing below will move</em>');
+    rows += '<div class="mrow' + (dHanded ? ' t5' : (dOpen ? ' t3' : '')) + '" data-area="__docs">' +
+      '<div class="mt">Early dismissal follow-up' + redirect + '</div>' +
+      big(dOpen, 'waiting on a form teacher') +
+      big(dHanded, 'with the committee') +
+    '</div>';
+  }
+
   var det = S.det && S.det.rows ? S.det.rows.length : 0;
   rows += '<div class="mrow soon" data-area="__det"><div class="mt">Detention Sessions' +
     '<em>' + (S.det ? det + ' row' + (det===1?'':'s') + ' in 🪑 Detention &mdash; the screen is not built yet'
@@ -775,7 +846,8 @@ function menuHtml(){
     '<h1>SAJC Discipline Committee Hub</h1>' +
     '<div class="who">Signed in as ' + esc(S.user) + '.</div>' +
     '<div class="mrows">' + rows + '</div>' + tools +
-    '<div class="foot"><span>Counts come from the snapshot, which rebuilds hourly. ' +
+    '<div class="foot"><span>Counts come from the snapshot, which rebuilds hourly &mdash; ' +
+    'except early dismissal follow-up, which is read live every time this page loads. ' +
     'Nothing is locked &mdash; every area opens for anyone.</span>' +
     '<span class="sp"></span><button class="plain" id="out">Sign out</button></div>' +
   '</div></div>';
@@ -1255,6 +1327,195 @@ function studentHtml(){
     '<div class="foot"><span>Excusing an offence never edits what was recorded. The row stays; ' +
       'its state changes, with who decided and why.</span></div>' +
   '</div></div>';
+}
+
+/* ── early dismissal follow-up ────────────────────────────────────────── */
+/* Folded in from the standalone documents.html on 2 August, so that there is
+   one front door rather than two. The rule this screen exists to protect:
+
+   EVERY ACKNOWLEDGEMENT WAS MADE BY SOMEBODY HOLDING A LINK THAT WAS EMAILED
+   TO A NAMED TEACHER — not by that teacher. A forwarded message, a shared
+   staffroom laptop, a colleague covering the class: all indistinguishable.
+   So nothing here says "confirmed", "verified" or "certified". It says "from
+   the link sent to". If any line is ever found claiming more than that, it is
+   a defect, and a more serious one than it looks. */
+
+function docsHtml(){
+  if (!S.docs){
+    return '<div class="screen centre"><div class="wrap">' +
+      '<h1 class="big">The follow-up records could not be read.</h1>' +
+      '<div class="lede">This area reads &#128203; Log and &#128196; Documents live, so there is ' +
+        'no older answer to fall back on &mdash; unlike every other area, which can still show ' +
+        'you the last snapshot. Nothing has been changed by this.</div>' +
+      '<div class="stack"><button id="dretry">Try again</button>' +
+      '<button class="plain" data-go="menu">Back to all areas</button></div>' +
+    '</div></div>';
+  }
+
+  var d = S.docs;
+  var handed = docsHanded(), open = docsOpen(), settled = docsSettled(), receipts = docsReceipts();
+
+  /* No builtHtml() here, deliberately. This answer is live and has no age. */
+  var h = '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="date">' + esc(todayLong()) +
+      ' <span class="built">as at ' + esc(d.serverTime || '') + '</span></div>' +
+    '<h1>Early dismissal follow-up</h1>' +
+    '<div class="who">What the automatic emails have and have not achieved. This is the only ' +
+      'place an acknowledgement can be undone.</div>';
+
+  /* onlyTo first and loudest. A redirect left on after a test looks EXACTLY
+     like a system that is working — every row fills in, every state moves,
+     and not one form teacher has been written to. */
+  if (d.onlyTo){
+    h += '<div class="note err"><b>Every message is being redirected to ' + esc(d.onlyTo) +
+      '.</b> No form teacher is receiving anything, whatever the switch below says. Clear ' +
+      '<i>Early dismissal email &mdash; send only to</i> in &#9881;&#65039; Config when you have ' +
+      'finished testing.</div>';
+  }
+  h += d.sendingOn
+    ? '<div class="note ok"><b>Automatic sending is on.</b> Notices and reminders go out each ' +
+      'afternoon. Set <i>Early dismissal email &mdash; send</i> in &#9881;&#65039; Config to ' +
+      'anything other than <i>On</i> to stop them &mdash; it takes effect at the next run, with ' +
+      'no redeploy.</div>'
+    : '<div class="note warn"><b>Automatic sending is off.</b> Slips are still being logged, but ' +
+      'no form teacher is being told and nothing below will move.</div>';
+
+  h += '<div class="grouplabel">With the committee &mdash; the machine has stopped</div>' +
+    (handed.length ? docRowsHtml(handed)
+      : '<div class="blank">Nothing has been given up on. Every open case is still inside its ' +
+        'two reminders.</div>');
+
+  h += '<div class="grouplabel">Open &mdash; waiting on a form teacher</div>' +
+    (open.length ? docRowsHtml(open)
+      : '<div class="blank">Nothing is outstanding. Every slip that owed a document has been ' +
+        'acknowledged or queried.</div>');
+
+  h += '<div class="grouplabel">Acknowledged, queried and closed</div>' +
+    (settled.length ? docRowsHtml(settled)
+      : '<div class="blank">Nothing has been acknowledged yet.</div>');
+
+  if (receipts.length){
+    h += '<div class="grouplabel">Receipts &mdash; nothing was owed, nothing was chased</div>' +
+      '<div class="lede">Named in a notice so the form teacher&rsquo;s record matches ours. They ' +
+      'owe nothing, and the row exists only so the same receipt is not sent again tomorrow.</div>' +
+      docRowsHtml(receipts);
+  }
+
+  h += '<div class="foot"><span>This screen writes one thing: the outcome of a slip, with who ' +
+    'changed it and why. It never edits what the General Office recorded, never changes whether ' +
+    'a slip counts, and never sends mail.</span><span class="sp"></span>' +
+    '<button class="plain" data-go="menu">Back to all areas</button></div>';
+
+  return h + '</div></div>';
+}
+
+function docRowsHtml(list){
+  return '<div class="rows">' + list.map(docRowHtml).join('') + '</div>';
+}
+
+function docRowHtml(x){
+  var meta = [x.cls, 'left early ' + x.date, x.reasonLabel];
+  meta.push(x.notifiedTo ? 'to ' + x.notifiedTo : 'not addressed');
+  if (x.notifiedOn) meta.push('told ' + x.notifiedOn);
+  if (x.chase1On)   meta.push('reminded ' + x.chase1On);
+  if (x.chase2On)   meta.push('last reminder ' + x.chase2On);
+
+  var say;
+  if (x.outcome === DOC_AWAIT && x.handedOn){
+    say = 'Told the form teacher on <b>' + esc(x.notifiedOn) + '</b>, reminded twice, and nothing ' +
+          'came back. Handed over on <b>' + esc(x.handedOn) + '</b> &mdash; no further email will ' +
+          'be sent about it. It is a person&rsquo;s job now.';
+  } else if (x.outcome === DOC_AWAIT){
+    say = 'Waiting. ' + (x.chase2On ? 'Both reminders have gone.'
+        : x.chase1On ? 'One reminder has gone; one more to come.'
+        : 'No reminder yet.');
+  } else if (x.outcome === DOC_RECEIPT){
+    say = 'Nothing was owed. Listed in the notice so the record matches.';
+  } else {
+    /* The sentence the whole subsystem turns on. Never "confirmed". */
+    say = 'Recorded from the link sent to <b>' + esc(x.ackBy || 'somebody') + '</b>' +
+          (x.ackOn ? ', ' + esc(x.ackOn) : '') + '. That is what the record says, and all it can ' +
+          'say &mdash; a click is not the same as the named teacher.';
+  }
+  if (x.revBy) say += ' Reversed by <b>' + esc(x.revBy) + '</b> &mdash; ' + esc(x.revReason);
+
+  var tag = x.outcome === DOC_AWAIT
+      ? (x.handedOn ? '<span class="tag t5">Given up on</span>'
+                    : '<span class="tag t3">Awaiting</span>')
+    : x.outcome === DOC_RECEIPT  ? '<span class="tag quiet">Nothing owed</span>'
+    : x.outcome === DOC_QUERIED  ? '<span class="tag quiet">Queried</span>'
+    : '<span class="tag ok">' + esc(x.outcome) + '</span>';
+
+  var action = '';
+  if (x.outcome === DOC_AWAIT){
+    action = '<button class="ghost sm" data-dclose="' + esc(x.entryId) + '">Close it</button>';
+  } else if (x.outcome !== DOC_RECEIPT){
+    action = '<button class="plain" data-dback="' + esc(x.entryId) + '">Reverse this</button>';
+  }
+
+  return '<div class="row flat">' +
+      '<div class="body">' +
+        '<div class="p">' + esc(x.name) + '</div>' +
+        '<div class="meta">' + meta.map(esc).join(' &middot; ') + '</div>' +
+        '<div class="s">' + say + '</div>' +
+      '</div>' +
+      '<div class="dside">' + tag + action + '</div>' +
+    '</div>' +
+    (S.dask === x.entryId ? docAskHtml() : '');
+}
+
+function docAskHtml(){
+  var toClosed = S.dto === DOC_CLOSED;
+  return '<div class="note q">' +
+    '<b>' + (toClosed ? 'Closing this without a form teacher acknowledging it.'
+                      : 'Putting this back to awaiting.') + '</b> ' +
+    (toClosed ? 'The record will say the committee closed it, not that a document arrived.'
+              : 'It returns to the open list. If sending is on it will be reminded again.') +
+    ' Nothing already recorded is deleted &mdash; the row stays, with who decided and why.' +
+    '<div class="field"><label>Why</label>' +
+      '<textarea id="drsn" rows="2" placeholder="Required. Without one the record is ' +
+      'indistinguishable from a mistake when somebody reads it back in a year."></textarea></div>' +
+    (S.dErr ? '<div class="note err">' + esc(S.dErr) + '</div>' : '') +
+    '<div class="stack rowwise">' +
+      '<button class="sm" id="ddo"' + (S.busy?' disabled':'') + '>' +
+        (S.busy ? 'Saving&hellip;' : (toClosed ? 'Close it' : 'Put it back')) + '</button>' +
+      '<button class="plain" id="dnope">Not yet</button>' +
+    '</div></div>';
+}
+
+function doDocReverse(){
+  var reason = $('drsn') ? $('drsn').value.trim() : '';
+  if (!reason){
+    S.dErr = 'A reason is required. Without one the record is indistinguishable from a mistake ' +
+             'when somebody reads it back in a year.';
+    return render();
+  }
+  S.busy = true; S.dErr = ''; render();
+  api('hubDocumentReverse', { token:TOKEN, entryId:S.dask, by:S.user, reason:reason, to:S.dto })
+    .then(function(r){
+      S.busy = false;
+      if (!r || !r.ok){
+        S.dErr = (r && r.error) || 'That could not be changed. Nothing was saved.';
+        return render();
+      }
+      S.dask = null; render();
+      loadDocs().then(function(){ render(); });
+    })
+    .catch(function(){
+      /* A LOST REPLY SAYS NOTHING ABOUT WHAT THE SERVER DID. Reload and let her
+         look, rather than claiming nothing was saved — the one claim we cannot
+         make from here. */
+      S.busy = false; S.dask = null;
+      S.dErr = '';
+      loadDocs().then(function(){
+        render();
+        var w = $('view').querySelector('.wrap');
+        if (w) w.insertAdjacentHTML('afterbegin',
+          '<div class="note warn"><b>The answer did not come back.</b> That says nothing about ' +
+          'whether it saved, so the list has been reloaded &mdash; check the row below before ' +
+          'trying again.</div>');
+      });
+    });
 }
 
 /* ── the daily email ──────────────────────────────────────────────────── */
@@ -1743,6 +2004,12 @@ function wire(){
     S.ask = { kind: heldNow(S.student) ? 'unhold' : 'hold' }; S.err=''; render();
   });
   if ($('doask')) $('doask').addEventListener('click', doAsk);
+  if ($('ddo')) $('ddo').addEventListener('click', doDocReverse);
+  if ($('dnope')) $('dnope').addEventListener('click', function(){ S.dask=null; S.dErr=''; render(); });
+  if ($('drsn')) $('drsn').focus();
+  if ($('dretry')) $('dretry').addEventListener('click', function(){
+    loadDocs().then(function(){ render(true); });
+  });
   if ($('cancelask')) $('cancelask').addEventListener('click', function(){ S.ask=null; S.err=''; render(); });
   if ($('reason')) $('reason').focus();
   if ($('copyaddr')) $('copyaddr').addEventListener('click', function(){
@@ -1792,9 +2059,16 @@ function wire(){
       return;
     }
 
+    var dcl = t.closest && t.closest('[data-dclose]');
+    if (dcl){ S.dask = dcl.getAttribute('data-dclose'); S.dto = DOC_CLOSED; S.dErr=''; render(); return; }
+
+    var dbk = t.closest && t.closest('[data-dback]');
+    if (dbk){ S.dask = dbk.getAttribute('data-dback'); S.dto = DOC_AWAIT; S.dErr=''; render(); return; }
+
     var area = t.closest && t.closest('[data-area]');
     if (area){
       var key = area.getAttribute('data-area');
+      if (key === '__docs'){ S.dask=null; S.dErr=''; go('docs'); return; }
       var a = areaOf(key);
       if (a && a.built) openArea(key); else go('soon');
       return;

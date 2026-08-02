@@ -323,6 +323,19 @@ table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
 .loading b{display:block;color:var(--ink);font-weight:600;font-size:15.5px}
 .loading span{display:block;font-size:13.5px}
 .hintx{font-size:13px;color:var(--muted)}
+.diag{margin-top:12px;padding-top:12px;border-top:1px solid rgba(0,0,0,.09);font-size:13.5px}
+.diag .drow{display:flex;gap:16px;align-items:baseline;margin-bottom:9px;flex-wrap:wrap}
+.diag .drow > b{flex:0 0 190px;font-weight:600;color:var(--ink);font-size:12px;
+  text-transform:uppercase;letter-spacing:.1em}
+.diag .drow > div{flex:1;min-width:220px}
+.diag i{color:var(--muted);font-style:normal}
+.diag .dwhy{color:var(--ink);line-height:1.55}
+.dchip{display:inline-block;font-size:12px;font-variant-numeric:tabular-nums;padding:2px 8px;
+  border-radius:6px;margin:0 5px 5px 0;background:#efece6;color:var(--muted)}
+.dchip.ok{background:var(--good-tint);color:var(--good)}
+.dchip.bad{background:var(--bad-tint);color:var(--bad);font-weight:600}
+.dchip.warn{background:var(--warn-tint);color:var(--warn);font-weight:600}
+.diag .dline{margin-bottom:5px;color:var(--muted)}
 .spin{flex:0 0 auto;width:19px;height:19px;border-radius:50%;
   border:2.5px solid var(--line);border-top-color:var(--accent);animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -389,7 +402,7 @@ var S = {
   history:null,         // hubHistory's reply for that student
   hLoading:false, hErr:'',
   ask:null,             // { kind:'overturn'|'hold'|'unhold', entryId, reason }
-  tLoading:false, tErr:'',
+  tLoading:false, tErr:'', diag:false,
   local:{},             // entryId -> 'Overturned', until the next rebuild
   holdLocal:{},         // studentId|domain -> 'Held' | 'Open', likewise
   sel:{},               // entryId -> true
@@ -544,6 +557,20 @@ function todayLong(){
   return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()] +
          ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear();
 }
+/* '02 Jul 2026 · 09 Jul 2026 · 29 Jul 2026' → '02 Jul · 09 Jul · 29 Jul'.
+   The year is the same on every row of the email and the column is the widest
+   thing in the table, so it is repetition paid for in wrapped lines. IF THE
+   YEARS DIFFER the string is left alone — a date list that straddles a year
+   boundary is exactly when the year is the thing you need to see. */
+function shortDates(str){
+  var s = String(str || '');
+  var years = s.match(/\b[A-Za-z]{3}\s+(\d{4})\b/g);
+  if (!years || !years.length) return s;
+  var first = years[0].slice(-4);
+  for (var i = 1; i < years.length; i++) if (years[i].slice(-4) !== first) return s;
+  return s.replace(/(\b[A-Za-z]{3})\s+\d{4}\b/g, '$1');
+}
+
 function ordinal(n){
   n = Number(n)||0;
   var s=['th','st','nd','rd'], v=n%100;
@@ -1187,16 +1214,25 @@ function pickedLates(){ return picked().filter(function(x){ return x.domain !== 
 function pickedThu(){   return picked().filter(function(x){ return x.domain === 'Thursday privilege'; }); }
 
 function recipients(){
-  var out = [], seen = {}, missing = [], unresolved = [];
-  if (!S.teachers) return { list:[], missing:[], unresolved:[], ready:false };
+  var out = [], seen = {}, absent = [], noIds = [], unresolved = [], noClass = [];
+  if (!S.teachers) return { list:[], absent:[], noIds:[], unresolved:[], noClass:[], ready:false };
   picked().forEach(function(x){
     var k = String(x.cls||'').trim().toUpperCase();      // C returns UPPERCASE keys
+    /* A student with no class is not a class with no teachers. Reporting it as
+       "no teachers listed for ''" was how a blank cell in the Log turned into
+       an accusation about the Master. */
+    if (!k){ if (noClass.indexOf(x.name)<0) noClass.push(x.name); return; }
     var t = S.teachers.byClass ? S.teachers.byClass[k] : undefined;
-    if (t === undefined){ if (missing.indexOf(k)<0) missing.push(k); return; }
+    /* THREE DIFFERENT FAULTS, THREE DIFFERENT SENTENCES. C is careful to
+       return the key with an empty array when a class exists but has nobody,
+       precisely so these can be told apart — collapsing them back into one
+       "no teachers listed" threw that away and sent somebody looking in the
+       wrong tab. */
+    if (t === undefined){ if (absent.indexOf(k)<0) absent.push(k); return; }   // not in Class Allocations
     if (!t.length){
       var u = S.teachers.unresolvedByClass && S.teachers.unresolvedByClass[k];
-      if (u && u.length){ if (unresolved.indexOf(k)<0) unresolved.push(k); }
-      else if (missing.indexOf(k)<0) missing.push(k);
+      if (u && u.length){ if (unresolved.indexOf(k)<0) unresolved.push(k); }   // IDs there, none Active
+      else if (noIds.indexOf(k)<0) noIds.push(k);                              // the class is there, the IDs are not
       return;
     }
     t.forEach(function(p){
@@ -1205,7 +1241,79 @@ function recipients(){
       seen[e] = 1; out.push(p);
     });
   });
-  return { list:out, missing:missing, unresolved:unresolved, ready:true };
+  return { list:out, absent:absent, noIds:noIds, unresolved:unresolved, noClass:noClass, ready:true };
+}
+
+/* WHAT THE MASTER ACTUALLY SENT BACK, on demand. "No teachers listed for
+   26S04" says a fact without saying which side of the join is wrong: the
+   class the Hub asked for, or the classes the Master holds. This shows both
+   lists side by side so the mismatch is visible rather than deduced. */
+function diagHtml(){
+  if (!S.diag) return '<div class="stack rowwise" style="margin-top:10px">' +
+    '<button class="plain" id="showdiag">Why? Show what the Master sent back</button></div>';
+
+  var need = {}, blank = [];
+  picked().forEach(function(x){
+    var k = String(x.cls||'').trim().toUpperCase();
+    if (k) need[k] = 1; else blank.push(x.name);
+  });
+  var needList = Object.keys(need).sort();
+  var by = (S.teachers && S.teachers.byClass) || {};
+  var have = Object.keys(by).sort();
+  var withT = have.filter(function(c){ return by[c] && by[c].length; });
+  var emptyT = have.filter(function(c){ return !by[c] || !by[c].length; });
+
+  function state(c){
+    if (by[c] === undefined) return 'bad';
+    return (by[c] && by[c].length) ? 'ok' : 'warn';
+  }
+
+  /* WHICH CLASSES HAVE TEACHERS AND WHICH DO NOT is the single most useful
+     line here: if every class with teachers is one intake year and every
+     class without is the other, the fault is one tab, not fifteen rows. */
+  var why;
+  if (!have.length){
+    why = 'The reply carried <b>no classes at all</b>. Either the Master Database has no Class ' +
+          'Allocations rows, or ⚙️ Config\'s <b>Academic year</b> does not match the tab they are on.';
+  } else if (!withT.length){
+    why = 'The Master returned <b>' + have.length + ' classes and not one of them has a teacher</b>. ' +
+          'That is not fifteen bad rows &mdash; it is one thing wrong once. Check the <b>CT 1 / CT 2 / ' +
+          'CTA 1 / CTA 2</b> column headings in Class Allocations, and that the cells hold <b>Teacher IDs</b> ' +
+          '(T-0042) rather than names.';
+  } else if (needList.filter(function(c){ return by[c] === undefined; }).length){
+    why = 'The Master holds ' + have.length + ' classes but not these ones. Check that the class code in ' +
+          'Class Allocations matches the code on the Log row exactly &mdash; a trailing space or a ' +
+          'different prefix is enough.';
+  } else if (needList.filter(function(c){ return state(c) === 'warn'; }).length){
+    why = '<b>' + withT.length + ' of the Master\'s ' + have.length + ' classes do have teachers</b>, ' +
+          'so the tab and the columns are being read correctly &mdash; these particular classes have ' +
+          'empty CT cells. If the ones that work are all one intake year and the ones that do not are ' +
+          'the other, only one intake has been filled in.';
+  } else {
+    why = 'Every class in this email has teachers. If addresses are still missing, those Teacher IDs ' +
+          'have no <b>Active</b> row in the Teachers tab.';
+  }
+
+  return '<div class="diag">' +
+    '<div class="drow"><b>Classes in today\'s email</b><div>' +
+      needList.map(function(c){
+        return '<span class="dchip ' + state(c) + '">' + esc(c) + '</span>';
+      }).join('') + (blank.length ? '<span class="dchip bad">no class recorded ×' + blank.length + '</span>' : '') +
+    '</div></div>' +
+    '<div class="drow"><b>The Master returned</b><div>' +
+      (have.length
+        ? '<div class="dline"><span class="dchip ok">' + withT.length + '</span> with teachers' +
+          (withT.length ? ' &mdash; ' + esc(withT.slice(0,10).join(', ')) +
+             (withT.length>10 ? ' +' + (withT.length-10) + ' more' : '') : '') + '</div>' +
+          '<div class="dline"><span class="dchip warn">' + emptyT.length + '</span> with none' +
+          (emptyT.length ? ' &mdash; ' + esc(emptyT.slice(0,10).join(', ')) +
+             (emptyT.length>10 ? ' +' + (emptyT.length-10) + ' more' : '') : '') + '</div>'
+        : '<i>no classes at all</i>') +
+    '</div></div>' +
+    '<div class="drow"><b>What that means</b><div class="dwhy">' + why + '</div></div>' +
+    '<div class="stack rowwise" style="margin-top:10px">' +
+      '<button class="plain" id="hidediag">Hide</button></div>' +
+  '</div>';
 }
 
 function emailBody(){
@@ -1222,7 +1330,7 @@ function emailBody(){
     rows.forEach(function(x){
       lines.push(x.name + '  |  ' + x.cls + '  |  ' + x.term + ' this term (' + x.year + ' this year)' +
                  '  |  Tier ' + x.tier);
-      lines.push('    Dates: ' + (x.dates || '—'));
+      lines.push('    Dates: ' + (shortDates(x.dates) || '—'));
       lines.push('    ' + x.action);
       lines.push('');
     });
@@ -1235,7 +1343,7 @@ function emailBody(){
     thu.forEach(function(x){
       lines.push(x.name + '  |  ' + x.cls + '  |  ' + x.term + ' separate Thursdays' +
                  '  |  Thursday privilege removed');
-      lines.push('    Thursdays: ' + (x.dates || '—'));
+      lines.push('    Thursdays: ' + (shortDates(x.dates) || '—'));
     });
     lines.push('');
   }
@@ -1268,9 +1376,25 @@ function emailHtml(){
   }
   else if (!r.ready){ warn = ''; }
   else {
-    if (r.missing.length)
-      warn += '<div class="note warn"><b>No teachers listed for ' + esc(r.missing.join(', ')) +
-              '.</b> Add them to the Master Database, or type the addresses in by hand.</div>';
+    if (r.noClass.length)
+      warn += '<div class="note err"><b>' + esc(r.noClass.join(', ')) +
+              (r.noClass.length===1 ? ' has' : ' have') + ' no class on the Log row</b>, so there is ' +
+              'nobody to address about ' + (r.noClass.length===1?'them':'them') + '. ' +
+              'That is a gap in the record rather than a gap in the Master.</div>';
+    if (r.absent.length)
+      warn += '<div class="note warn"><b>' + esc(r.absent.join(', ')) +
+              (r.absent.length===1 ? ' is' : ' are') + ' not in the Master Database\'s ' +
+              'Class Allocations at all.</b> Either the class is missing from that tab, or its ' +
+              'code there does not match the code on the Log row &mdash; a trailing space is enough.' +
+              diagHtml() + '</div>';
+    if (r.noIds.length)
+      warn += '<div class="note warn"><b>' + esc(r.noIds.join(', ')) +
+              (r.noIds.length===1 ? ' is' : ' are') + ' in Class Allocations, but with ' +
+              '<u>no Teacher IDs</u> against ' + (r.noIds.length===1?'it':'them') + '.</b> ' +
+              'The Master opened and returned the ' + (r.noIds.length===1?'class':'classes') +
+              ' &mdash; the CT 1 / CT 2 / CTA 1 / CTA 2 cells are empty, or those column headings ' +
+              'are not the ones the tracker reads. Run <b>📋 Attendance → 🔍 Check for problems</b>, ' +
+              'which counts the class teachers it can see.' + diagHtml() + '</div>';
     if (r.unresolved.length)
       warn += '<div class="note err"><b>' + esc(r.unresolved.join(', ')) +
               ' has teachers assigned who are not Active in the Master.</b> ' +
@@ -1290,7 +1414,7 @@ function emailHtml(){
         return '<tr class="' + sevClass(x.tier) + '"><td>' + esc(x.name) + '</td><td>' + esc(x.cls) + '</td>' +
           '<td class="n">' + x.term + '</td><td class="n">' + x.year + '</td>' +
           '<td class="c"><span class="chip ' + sevClass(x.tier) + '">Tier ' + x.tier + '</span></td>' +
-          '<td>' + esc(x.dates || '—') + '</td></tr>';
+          '<td>' + esc(shortDates(x.dates) || '—') + '</td></tr>';
       }).join('') + '</tbody></table>'
     : '';
 
@@ -1303,7 +1427,7 @@ function emailHtml(){
         return '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.cls) + '</td>' +
                '<td class="n">' + x.term + '</td>' +
                '<td class="c"><span class="chip none">Privilege removed</span></td>' +
-               '<td>' + esc(x.dates || '—') + '</td></tr>';
+               '<td>' + esc(shortDates(x.dates) || '—') + '</td></tr>';
       }).join('') + '</tbody></table>'
     : '';
 
@@ -1494,6 +1618,8 @@ function wire(){
     copy(recipients().list.map(function(p){ return p.email; }).join('; '), this); });
   if ($('copybody')) $('copybody').addEventListener('click', function(){ copy(emailBody(), this); });
   if ($('retryteach')) $('retryteach').addEventListener('click', loadTeachers);
+  if ($('showdiag')) $('showdiag').addEventListener('click', function(){ S.diag = true; render(); });
+  if ($('hidediag')) $('hidediag').addEventListener('click', function(){ S.diag = false; render(); });
   if ($('outlook')) $('outlook').addEventListener('click', openOutlook);
 
   v.onclick = function(e){

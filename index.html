@@ -75,6 +75,7 @@ h2{font-size:24px;margin-bottom:4px}
 .who{font-size:15.5px;color:var(--muted);margin-bottom:16px}
 .sub{font-size:21px;color:var(--muted);font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1}
 .lede{font-size:15.5px;color:var(--muted);max-width:52ch;margin-top:12px}
+.gap{height:26px}
 .centre .lede{margin-left:auto;margin-right:auto}
 .foot{font-size:12.5px;color:var(--muted);margin-top:26px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
 .foot .sp{flex:1}
@@ -605,7 +606,7 @@ function signIn(){
   S.name = nm;
   if (!nm){ S.err='Type your name. It goes into the record of every follow-up you make.'; render(); return; }
   if (!pw){ S.err='Type the password.'; render(); return; }
-  S.busy = true; S.err = ''; render();
+  S.busy = true; S.err = ''; render();   // label change only — see signinHtml
 
   api('hubLogin', { password: pw }).then(function(res){
     if (!res || !res.ok){ S.busy=false; S.err=(res&&res.error)||'Could not sign in.'; render(); return; }
@@ -678,18 +679,19 @@ function screenOpen(cls){
 var moveless = false;
 
 function signinHtml(){
-  return '<div class="screen centre"><div class="wrap">' +
+  /* THE SIGN-IN SCREEN ANIMATES ONCE. Going busy is a change of button label,
+     not a change of screen — replaying the entrance every time the state
+     moved made a slow sign-in look like a page reloading itself. */
+  return '<div class="screen centre' + (S.first ? '' : ' still') + '"><div class="wrap">' +
     '<div class="date">' + esc(todayLong()) + '</div>' +
     '<h1 class="big">SAJC Discipline Committee Hub</h1>' +
-    '<div class="lede">Your name goes into every record you make here &mdash; who followed up, ' +
-    'who decided, who issued. It is not a login; there are no accounts and no permissions. ' +
-    'Every area opens for everyone.</div>' +
+    '<div class="gap"></div>' +
     '<div class="field"><label>Your name</label>' +
       '<input id="nm" autocomplete="name" value="' + esc(S.name || S.user) + '"></div>' +
     '<div class="field"><label>Committee password</label>' +
       '<input type="password" id="pw" autocomplete="current-password" autocapitalize="off" spellcheck="false"></div>' +
     '<div class="stack"><button id="go"' + (S.busy?' disabled':'') + '>' +
-      (S.busy ? 'Opening&hellip;' : 'Open the Hub') + '</button></div>' +
+      (S.busy ? 'Logging in&hellip;' : 'Login') + '</button></div>' +
     (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') +
   '</div></div>';
 }
@@ -1273,8 +1275,17 @@ function diagHtml(){
      class without is the other, the fault is one tab, not fifteen rows. */
   var why;
   if (!have.length){
-    why = 'The reply carried <b>no classes at all</b>. Either the Master Database has no Class ' +
-          'Allocations rows, or ⚙️ Config\'s <b>Academic year</b> does not match the tab they are on.';
+    /* Confirmed against readClassTeachers_ on 2 August: it filters on NOTHING.
+       No year, no cohort, no status on the class row. It opens a tab named
+       exactly 'Class Allocations', reads the class code from column B, and
+       returns what it finds. An empty map therefore means it never found the
+       tab — and a tab it cannot find is skipped in silence. */
+    why = 'The reply carried <b>no classes at all</b>, and the Master itself opened fine. ' +
+          'The tracker looks for a tab named <b>exactly “Class Allocations”</b> and reads the ' +
+          'class code from <b>column B</b>. If the tab is named anything else &mdash; an emoji ' +
+          'prefix, a trailing space, “Class Allocation” singular &mdash; it is skipped without ' +
+          'an error. <b>Check the tab name letter for letter</b>, and that “Teachers” is spelled ' +
+          'exactly that too.';
   } else if (!withT.length){
     why = 'The Master returned <b>' + have.length + ' classes and not one of them has a teacher</b>. ' +
           'That is not fifteen bad rows &mdash; it is one thing wrong once. Check the <b>CT 1 / CT 2 / ' +
@@ -1392,9 +1403,9 @@ function emailHtml(){
               (r.noIds.length===1 ? ' is' : ' are') + ' in Class Allocations, but with ' +
               '<u>no Teacher IDs</u> against ' + (r.noIds.length===1?'it':'them') + '.</b> ' +
               'The Master opened and returned the ' + (r.noIds.length===1?'class':'classes') +
-              ' &mdash; the CT 1 / CT 2 / CTA 1 / CTA 2 cells are empty, or those column headings ' +
-              'are not the ones the tracker reads. Run <b>📋 Attendance → 🔍 Check for problems</b>, ' +
-              'which counts the class teachers it can see.' + diagHtml() + '</div>';
+              ' &mdash; columns <b>F to I</b> of Class Allocations are empty on those rows. ' +
+              'Run <b>📋 Attendance → 🔍 Check for problems</b>, which counts the class teachers ' +
+              'it can see.' + diagHtml() + '</div>';
     if (r.unresolved.length)
       warn += '<div class="note err"><b>' + esc(r.unresolved.join(', ')) +
               ' has teachers assigned who are not Active in the Master.</b> ' +

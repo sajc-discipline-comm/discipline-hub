@@ -27,9 +27,18 @@
   IT WRITES ONE THING IN THIS SLICE: the follow-up stamp, in a batch, after
   you confirm the email was sent. Copying the email records nothing.
 
-  NOTHING CAN FORCE A REBUILD, so no screen pretends the world updated. A
-  stamp strikes the row through immediately and says out loud that the figures
-  behind it are from the last snapshot.
+  NOTHING CAN FORCE A REBUILD, and that is still true. The Hub RE-READS what
+  the trigger last built — every five minutes on its own, and whenever you ask
+  — but it cannot make the server build a new one. The distinction matters:
+  Refresh fetches, it does not rebuild, and no screen may imply otherwise.
+
+  A REFRESH NEVER MOVES THE PAGE UNDER YOU. It swaps silently only on the menu
+  and on early dismissal follow-up. Anywhere a selection, a confirmation or a
+  half-typed reason is at stake, the newer figures are held back behind a chip
+  and you choose the moment.
+
+  A stamp strikes the row through immediately and says out loud that the
+  figures behind it are from the last snapshot.
 
   THE TOKEN AND THE TEACHER ADDRESSES ARE HELD IN MEMORY AND NOWHERE ELSE.
   No localStorage, no sessionStorage, no cookie.
@@ -72,6 +81,19 @@ h2{font-size:24px;margin-bottom:4px}
 .centre .date:after{display:none}
 .built{font-size:12.5px;color:var(--muted);font-weight:400;white-space:nowrap}
 .built.old{color:var(--warn)}
+/* The refresh control. A pill rather than a link, because it sits on a line of
+   prose and has to read as a thing you can press. */
+.rfr{font-size:12px;font-weight:500;color:var(--accent);cursor:pointer;text-decoration:none;
+  border:1px solid var(--line);border-radius:999px;padding:3px 11px;white-space:nowrap;
+  background:var(--raised);
+  transition:background .2s var(--curve),border-color .2s var(--curve),color .2s var(--curve)}
+.rfr:hover{background:var(--accent-tint);border-color:var(--accent);color:var(--accent-deep)}
+/* Amber, and only ever shown when there is genuinely something waiting. A chip
+   that cries wolf is a chip nobody presses. */
+.rfr.new{background:var(--warn-tint);border-color:#e6cfa4;color:var(--warn);font-weight:600}
+.rfr.new:hover{background:#f2e4c8;border-color:var(--warn);color:var(--warn)}
+.rfr.busy{color:var(--muted);cursor:default;background:none}
+.rfr.busy:hover{background:none;border-color:var(--line);color:var(--muted)}
 .who{font-size:15.5px;color:var(--muted);margin-bottom:16px}
 .sub{font-size:21px;color:var(--muted);font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1}
 .lede{font-size:15.5px;color:var(--muted);max-width:52ch;margin-top:12px}
@@ -391,8 +413,25 @@ var TOOLS = [
     u:'https://sajc-discipline-comm.github.io/latecoming-live/' }
 ];
 
-/* How old a snapshot has to be before the stamp turns amber. */
-var STALE_MIN = 150;
+/* How old a snapshot has to be before the stamp turns amber.
+
+   WAS 150, WHICH WAS RIGHT WHEN THE TRIGGER RAN HOURLY AND THIS PAGE NEVER
+   ASKED AGAIN. At a ten-minute rebuild and a five-minute poll, anything past
+   twenty-five minutes means two rebuilds and three polls have gone missing —
+   which is worth an amber stamp, not a shrug. */
+var STALE_MIN = 25;
+
+/* How often the page asks whether the trigger has built anything newer.
+
+   FIVE, AGAINST THE SERVER'S TEN, so a new build is on screen within about
+   five minutes of landing rather than fifteen. Halving it again would double
+   the calls to buy nothing: you cannot be fresher than the thing you are
+   reading. */
+var POLL_MS = 5 * 60 * 1000;
+
+/* Month abbreviations as C writes them, for deciding whether a snapshot is
+   even from today. */
+var MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 /* Kim's wording, 2 August. The last sentence is the one that matters: losing
    the privilege means the Thursday 08:40 start no longer applies to them, so
@@ -426,7 +465,16 @@ var S = {
   sel:{},               // entryId -> true
   stamped:{},           // entryId -> {by, when} — optimistic, until the next rebuild
   result:null,
-  first:true
+  first:true,
+
+  /* WHEN THE SNAPSHOT ON SCREEN WAS FETCHED, in browser milliseconds. The
+     server sends the age at the moment of the fetch; this is what supplies
+     everything since, so the number on screen keeps moving. */
+  snapAt:0,
+  /* A newer snapshot the poll is holding because you were mid-task. NULL means
+     "nothing waiting", never "nothing newer exists". */
+  pending:null,
+  polling:false, refreshing:false, refreshErr:''
 };
 
 var $ = function(id){ return document.getElementById(id); };
@@ -628,16 +676,67 @@ function mins(hhmm){
 
 /* How old the snapshot is, in words. Every slow screen carries this because
    nothing on the client can force a rebuild. */
+/* How old the snapshot is, in words. Every slow screen carries this because
+   nothing on the client can force a rebuild.
+
+   THE OLD ARITHMETIC WAS FROZEN. It subtracted rebuiltAt from serverTime, and
+   BOTH were captured in the same reply at sign-in — so a tab left open all
+   morning went on insisting the figures were eight minutes old, for hours,
+   while quietly being four. The stamp that existed to expose staleness was
+   the thing hiding it.
+
+   Two clocks now. The server pair gives the age at the moment of the fetch;
+   the browser supplies the drift since, from S.snapAt. */
 function builtHtml(){
   if (!S.snap) return '';
   var at = String(S.snap.rebuiltAt||'').trim();
   if (!at) return '<span class="built old">Never rebuilt &mdash; run 📸 Rebuild the Snapshot now</span>';
+
   var m = /(\d{1,2}:\d{2})\s*$/.exec(at);
   var shown = m ? m[1] : at;
-  var age = (m && mins(S.snap.serverTime)!==null) ? mins(S.snap.serverTime) - mins(m[1]) : null;
-  var old = (age !== null && age > STALE_MIN);
-  return '<span class="built' + (old?' old':'') + '">Built ' + esc(shown) +
-         (old ? ' &mdash; ' + Math.round(age/60) + 'h ago' : '') + '</span>';
+
+  /* IS IT EVEN FROM TODAY? rebuiltAt carries its own date. A snapshot stamped
+     yesterday means the trigger has not run this morning — which the old
+     subtraction turned into a NEGATIVE number and then hid, because a negative
+     is not greater than the threshold. The worst staleness there is was the
+     one case that never went amber. */
+  var dm = /^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/.exec(at);
+  if (dm){
+    var n = new Date();
+    var sameDay = Number(dm[1]) === n.getDate() &&
+                  dm[2].toLowerCase() === MON3[n.getMonth()].toLowerCase() &&
+                  Number(dm[3]) === n.getFullYear();
+    if (!sameDay){
+      return '<span class="built old">Built ' + esc(dm[1] + ' ' + dm[2]) + ', ' +
+             esc(shown) + ' &mdash; not today</span>';
+    }
+  }
+
+  var base = (m && mins(S.snap.serverTime) !== null)
+               ? mins(S.snap.serverTime) - mins(m[1]) : null;
+  if (base === null) return '<span class="built">Built ' + esc(shown) + '</span>';
+
+  var drift = Math.floor((Date.now() - (S.snapAt || Date.now())) / 60000);
+  var age = Math.max(0, base + drift);      // clock skew must not read as the future
+  return '<span class="built' + (age > STALE_MIN ? ' old' : '') + '">Built ' +
+         esc(shown) + ' &mdash; ' + ageWords(age) + '</span>';
+}
+
+function ageWords(n){
+  if (n < 1) return 'just now';
+  if (n < 60) return n + ' min ago';
+  var h = Math.floor(n / 60), r = n % 60;
+  return h + 'h' + (r ? ' ' + r + 'm' : '') + ' ago';
+}
+
+/* The refresh control, in whichever of its four states it is in. One function
+   so the four cannot drift apart across the three screens that show it. */
+function refreshHtml(){
+  if (S.refreshing) return '<span class="rfr busy">Refreshing&hellip;</span>';
+  if (S.pending)    return '<a class="rfr new" id="fresh">Newer figures &mdash; refresh</a>';
+  if (S.refreshErr) return '<a class="rfr new" id="rfr" title="' + esc(S.refreshErr) +
+                           '">Refresh failed &mdash; try again</a>';
+  return '<a class="rfr" id="rfr">Refresh</a>';
 }
 
 /* ── sign in ──────────────────────────────────────────────────────────── */
@@ -656,7 +755,7 @@ function signIn(){
     if (!res || !res.ok){ S.busy=false; S.err=(res&&res.error)||'Could not sign in.'; render(); return; }
     TOKEN = res.token; S.user = nm;
     return loadAll().then(function(){
-      S.busy = false; S.view = 'menu'; render(true);
+      S.busy = false; S.view = 'menu'; startPolling(); render(true);
     });
   }).catch(function(){
     S.busy = false;
@@ -676,23 +775,147 @@ function signIn(){
 function loadAll(){
   return api('hubSnapshot', { token: TOKEN }).then(function(res){
     if (!res || !res.ok) throw new Error((res&&res.error) || 'The snapshot could not be read.');
-    S.snap = res;
-    return api('hubDetention', { token: TOKEN }).then(function(d){
-      S.det = (d && d.ok) ? d : null;      // null = "we do not know what is booked"
-    }).catch(function(){ S.det = null; })
-    .then(loadDocs);
+    applySnap(res);
+    return loadDetention().then(loadDocs);
   });
 }
 
+function loadDetention(){
+  return api('hubDetention', { token: TOKEN }).then(function(d){
+    S.det = (d && d.ok) ? d : null;        // null = "we do not know what is booked"
+  }).catch(function(){ S.det = null; });
+}
+
 /* THIS ONE IS LIVE, AND THAT IS THE WHOLE DIFFERENCE. Every other count on the
-   menu comes from 📸 Snapshot, which rebuilds hourly and stamps its own age.
-   hubDocuments reads 📋 Log and 📄 Documents directly, every time, so this
-   answer has no age to print — it is simply now. Do not give this area a
+   menu comes from 📸 Snapshot, which rebuilds every ten minutes and stamps its
+   own age. hubDocuments reads 📋 Log and 📄 Documents directly, every time, so
+   this answer has no age to print — it is simply now. Do not give this area a
    builtHtml() stamp: it would be claiming a staleness the data does not have. */
 function loadDocs(){
   return api('hubDocuments', { token: TOKEN }).then(function(r){
     S.docs = (r && r.ok) ? r : null;
   }).catch(function(){ S.docs = null; });
+}
+
+
+/* ── staying current ──────────────────────────────────────────────────── */
+/* THE PAGE USED TO ASK ONCE, AT SIGN-IN, AND NEVER AGAIN. The trigger's hour
+   was only half the staleness; the other half was a tab open since breakfast
+   showing figures fetched at breakfast. Two people working the same worklist
+   off two such tabs is how one student's form teacher is emailed twice about
+   the same offence — and hubStamp's alreadyDone protects the RECORD from
+   that, not the form teacher's inbox.
+
+   IT IS A POLL, NOT A PUSH. Apps Script cannot tap a page on the shoulder, so
+   a timer is the only mechanism there is — the same one the gate screen has
+   used all along. */
+var pollTimer = null;
+
+function startPolling(){
+  stopPolling();
+  pollTimer = setInterval(poll, POLL_MS);
+}
+function stopPolling(){
+  if (pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+}
+
+/* WHEN IT IS SAFE TO CHANGE THE PAGE UNDER SOMEBODY.
+
+   Exactly two screens qualify, and the rule is blunt rather than clever on
+   purpose. The menu is the idle state and has nothing to lose. Early dismissal
+   follow-up reads live anyway and holds no selection.
+
+   EVERYWHERE ELSE HOLDS BACK. A worklist arrives with every row already
+   ticked, so swapping the snapshot underneath it would silently change who is
+   in the email somebody is three seconds from sending. */
+function safeToSwap(){
+  if (S.busy || S.ask || S.dask) return false;
+  return S.view === 'menu' || S.view === 'docs';
+}
+
+function applySnap(res){
+  S.snap = res;
+  S.snapAt = Date.now();
+  S.pending = null;
+  S.refreshErr = '';
+}
+
+function poll(){
+  if (!TOKEN || S.polling || S.refreshing) return;
+  S.polling = true;
+  api('hubSnapshot', { token: TOKEN }).then(function(res){
+    S.polling = false;
+    if (!res || !res.ok) return;            // a failed poll is not news. Say nothing.
+
+    var isNew = !S.snap || String(res.rebuiltAt||'') !== String(S.snap.rebuiltAt||'');
+    if (!isNew){
+      /* SAME BUILD, BUT NOT THE SAME MOMENT — and this is the whole reason a
+         poll that finds nothing new is still worth making. Re-anchoring both
+         clocks is what stops "12 min ago" being a number frozen at sign-in. */
+      if (S.snap){ S.snap.serverTime = res.serverTime; S.snapAt = Date.now(); }
+      render();
+      return;
+    }
+    if (!safeToSwap()){ S.pending = res; render(); return; }
+    var prev = seenIds();
+    applySnap(res);
+    reselectNew(prev);
+    loadDetention().then(loadDocs).then(function(){ render(); });
+  }).catch(function(){ S.polling = false; });
+}
+
+/* The chip. Takes what the poll is holding rather than asking again — it is
+   already the newest thing the server has built. */
+function takePending(){
+  if (!S.pending) return refreshNow();
+  var prev = seenIds();
+  applySnap(S.pending);
+  reselectNew(prev);
+  loadDetention().then(loadDocs).then(function(){ render(); });
+}
+
+function refreshNow(){
+  if (!TOKEN || S.refreshing) return;
+  S.refreshing = true; S.pending = null; S.refreshErr = ''; render();
+  var prev = seenIds();
+  api('hubSnapshot', { token: TOKEN }).then(function(res){
+    if (!res || !res.ok) throw new Error((res && res.error) || 'The snapshot could not be read.');
+    applySnap(res);
+    reselectNew(prev);
+    return loadDetention().then(loadDocs);
+  }).then(function(){
+    S.refreshing = false; render();
+  }).catch(function(){
+    /* A FAILED REFRESH LEAVES THE OLD FIGURES ON SCREEN, and that is correct.
+       They were true ten minutes ago; a blank page is true of nothing. The
+       stamp beside them goes on ageing and will turn amber on its own. */
+    S.refreshing = false;
+    S.refreshErr = 'Could not reach the server just now. Nothing was changed — the ' +
+                   'figures on screen are the ones that were already here, and the age ' +
+                   'beside the date is still honest about how old they are.';
+    render();
+  });
+}
+
+/* Every Entry ID the snapshot on screen knows about, captured before it is
+   replaced. */
+function seenIds(){
+  var m = {};
+  allRows().forEach(function(x){ m[x.entryId] = 1; });
+  return m;
+}
+
+/* A WORKLIST ARRIVES WITH EVERY ROW TICKED, so a student who appears in a
+   refresh has to arrive ticked too. Otherwise the refresh QUIETLY EXCLUDES the
+   very person it has just told you about — the newest tier 7 in the school,
+   left out of today's email by the act of looking for them.
+
+   Rows already on screen keep whatever you did to them. */
+function reselectNew(prev){
+  if (S.view !== 'lc' || !S.area) return;
+  worklist(S.area).forEach(function(x){
+    if (!prev[x.entryId] && !isStamped(x)) S.sel[x.entryId] = true;
+  });
 }
 
 /* The six strings the server may return, byte for byte. TWO OF THEM CONTAIN AN
@@ -717,7 +940,9 @@ function docsSettled(){ return docRows().filter(function(x){
 function docsReceipts(){ return docRows().filter(function(x){ return x.outcome===DOC_RECEIPT; }); }
 
 function signOut(){
+  stopPolling();
   TOKEN=null; S.teachers=null;
+  S.pending=null; S.polling=false; S.refreshing=false; S.refreshErr=''; S.snapAt=0;
   S.view='signin'; S.snap=null; S.det=null; S.docs=null; S.sel={}; S.stamped={}; S.user='';
   S.dask=null; S.dto=''; S.dErr='';
   S.err=''; S.first=true; S.result=null; S.name='';
@@ -842,12 +1067,13 @@ function menuHtml(){
     }).join('') + '</div>';
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
-    '<div class="date">' + esc(todayLong()) + ' ' + builtHtml() + '</div>' +
+    '<div class="date">' + esc(todayLong()) + ' ' + builtHtml() + ' ' + refreshHtml() + '</div>' +
     '<h1>SAJC Discipline Committee Hub</h1>' +
     '<div class="who">Signed in as ' + esc(S.user) + '.</div>' +
     '<div class="mrows">' + rows + '</div>' + tools +
-    '<div class="foot"><span>Counts come from the snapshot, which rebuilds hourly &mdash; ' +
-    'except early dismissal follow-up, which is read live every time this page loads. ' +
+    '<div class="foot"><span>Counts come from the snapshot, which the server rebuilds every ' +
+    'ten minutes on a school day; this page re-reads it every five, so the age beside the ' +
+    'date is what it says it is. Early dismissal follow-up is read live and has no age. ' +
     'Nothing is locked &mdash; every area opens for anyone.</span>' +
     '<span class="sp"></span><button class="plain" id="out">Sign out</button></div>' +
   '</div></div>';
@@ -889,7 +1115,7 @@ function lcHtml(){
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="appbar"><a data-go="menu">&larr; All areas</a><span>&middot;</span>' +
       '<span>Signed in as ' + esc(S.user) + '</span></div>' +
-    '<div class="date">' + esc(a.title) + ' ' + builtHtml() + '</div>' +
+    '<div class="date">' + esc(a.title) + ' ' + builtHtml() + ' ' + refreshHtml() + '</div>' +
     '<div class="tabs"><a class="' + (S.tab==='follow'?'on':'') + '" data-tab="follow">Follow-up</a>' +
       '<a class="' + (S.tab==='det'?'on':'') + '" data-tab="det">Detention</a></div>' +
     body +
@@ -1306,7 +1532,7 @@ function studentHtml(){
 
     (over ? '<div class="note warn"><b>' + over + ' offence' + (over===1?'':'s') +
       ' excused just now.</b> The figures above still come from the last snapshot and ' +
-      'will drop at the next hourly rebuild.</div>' : '') +
+      'will drop at the next rebuild, within ten minutes.</div>' : '') +
 
     (S.ask ? askHtml() :
       '<div class="stack rowwise">' +
@@ -1358,7 +1584,8 @@ function docsHtml(){
   /* No builtHtml() here, deliberately. This answer is live and has no age. */
   var h = '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="date">' + esc(todayLong()) +
-      ' <span class="built">as at ' + esc(d.serverTime || '') + '</span></div>' +
+      ' <span class="built">as at ' + esc(d.serverTime || '') + '</span> ' +
+      refreshHtml() + '</div>' +
     '<h1>Early dismissal follow-up</h1>' +
     '<div class="who">What the automatic emails have and have not achieved. This is the only ' +
       'place an acknowledgement can be undone.</div>';
@@ -1929,7 +2156,7 @@ function sentHtml(){
     '<div class="lede">Written on the offence that reached the tier &mdash; ' +
       'the date, your name, and what the tier asked for. ' +
       'The counts on the previous screen are still from the last snapshot; ' +
-      'they catch up at the next hourly rebuild.</div>' + extra +
+      'they catch up at the next rebuild, within ten minutes.</div>' + extra +
     '<div class="stack">' +
       '<button data-go="lc">Back to ' + esc(areaOf(S.area).title) + '</button>' +
       '<button class="ghost" data-go="menu">All areas</button>' +
@@ -1990,6 +2217,8 @@ function wire(){
   if ($('pw')) $('pw').addEventListener('keydown', function(e){ if (e.key==='Enter') signIn(); });
   if ($('nm')) { if (S.name) { if ($('pw')) $('pw').focus(); } else $('nm').focus(); }
   if ($('out')) $('out').addEventListener('click', signOut);
+  if ($('rfr')) $('rfr').addEventListener('click', refreshNow);
+  if ($('fresh')) $('fresh').addEventListener('click', takePending);
 
   if ($('mail')) $('mail').addEventListener('click', function(){
     go('email');

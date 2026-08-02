@@ -74,6 +74,10 @@ h1.big{font-size:44px;margin-bottom:6px;font-variation-settings:'opsz' 90,'SOFT'
 .built.old{color:var(--warn)}
 .who{font-size:15.5px;color:var(--muted);margin-bottom:16px}
 .lede{font-size:15.5px;color:var(--muted);max-width:60ch;margin-top:12px}
+/* On the centred sign-in the wrap is 760px but the lede is capped at 60ch, so
+   without auto margins it sits flush left inside a centred column and reads as
+   crooked. Same reason .field and .stack carry them. */
+.centre .lede{margin-left:auto;margin-right:auto}
 
 .grouplabel{display:flex;align-items:center;gap:14px;margin:30px 0 10px;font-size:11.5px;
   font-weight:600;text-transform:uppercase;letter-spacing:.14em;color:var(--muted)}
@@ -176,10 +180,20 @@ function esc(s){ return String(s===null||s===undefined?'':s)
 
 function $(id){ return document.getElementById(id); }
 
+/* Text first, then parse — so "could not reach it" and "it answered with
+   something that is not a reply" stay different errors. */
 function api(p){
   return fetch(GAS_URL,{method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify(p)}).then(function(r){ return r.json(); });
+    body:JSON.stringify(p)})
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      try { return JSON.parse(t); }
+      catch(e){
+        var err = new Error('The server answered with something that is not a reply.');
+        err.notJson = true; throw err;
+      }
+    });
 }
 
 function todayLong(){
@@ -457,9 +471,17 @@ function doReverse(){
       S.asking = null; render(); load();
     })
     .catch(function(){
-      S.busy = false;
-      S.askErr = 'Could not reach the server. Nothing was saved &mdash; try again.';
-      render();
+      /* A lost reply says nothing about what the server did. Reload and look,
+         rather than claiming nothing was saved. */
+      S.busy = false; S.asking = null; render();
+      load();
+      window.setTimeout(function(){
+        var w = view.querySelector('.wrap');
+        if (w) w.insertAdjacentHTML('afterbegin',
+          '<div class="note warn"><b>The answer did not come back.</b> That says nothing ' +
+          'about whether it saved, so the list has been reloaded &mdash; check the row ' +
+          'below before trying again.</div>');
+      }, 400);
     });
 }
 

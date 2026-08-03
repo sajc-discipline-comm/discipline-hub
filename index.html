@@ -109,6 +109,130 @@ h2{font-size:24px;margin-bottom:4px}
 .peek.showing .slash{opacity:1}
 .peek:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:5px}
 
+/* ═══ THE STUDENT PAGE, REBUILT 3 AUGUST 2026 ══════════════════════════
+   The year used to be one flat list grouped by status: every record, every
+   term, in one column down the page. It served the EVIDENCE — the remarks you
+   need in front of you to excuse an offence — and buried the SHAPE, which is
+   what somebody opening a student page is actually looking for. Sixty rows is
+   a page nobody reads to the bottom, and the bottom is the oldest records,
+   which is what a pattern is made of.
+
+   Split into three. A chart for when. A compact block for what. The list,
+   folded, for the evidence. Nothing was removed. */
+
+/* Section headings were 11.5px uppercase muted — the same weight as a form
+   label — on a page with five sections, leaving nothing to navigate by. */
+.ghdr{display:flex;align-items:center;gap:16px;margin:38px 0 12px;
+  font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;
+  font-weight:600;font-size:22px;letter-spacing:-.017em;color:var(--ink)}
+.ghdr:after{content:'';flex:1;height:1px;background:var(--line)}
+
+/* ── THE YEAR, STACKED BY CATEGORY ──────────────────────────────────────
+   SEVEN SERIES CANNOT SIT SIDE BY SIDE — twelve months by seven is eighty-four
+   marks about three pixels wide. Stacked, the column height is the month's
+   total and each segment is its category, which is the composition-over-time
+   question this section exists to answer.
+
+   THE MONTHS SPREAD ACROSS THE FULL WIDTH; THE BARS STAY CAPPED AT 24px.
+   Widening a bar to fill its band is where a chart becomes a block diagram.
+   What stretches is the spacing. The extra room goes into height, where it
+   buys resolution — a difference of one record has to be visible. */
+.yr{margin:16px 0 6px}
+.yrplot{display:flex;align-items:flex-end;gap:10px;height:210px}
+.yrcol{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+  align-items:center;height:100%}
+.yrn{font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:6px;
+  font-variant-numeric:tabular-nums}
+.yrn.zero{color:transparent}
+.yrstack{width:100%;max-width:24px;display:flex;flex-direction:column;justify-content:flex-end}
+.yrseg{width:100%;min-height:3px}
+.yrseg.top{border-radius:4px 4px 0 0}
+.yrseg.gap{margin-bottom:2px}          /* the surface showing through, not a border */
+.yrnil{width:100%;max-width:24px;height:3px;background:rgba(27,30,43,.07)}
+.yraxis{display:flex;gap:10px;margin-top:8px;border-top:1px solid var(--line);padding-top:7px}
+.yrm{flex:1;text-align:center;font-size:11.5px;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em}
+.yrm.on{color:var(--ink);font-weight:600}
+.leg{display:flex;gap:8px 20px;align-items:center;flex-wrap:wrap;margin:4px 0 12px;
+  font-size:13px;color:var(--ink)}
+.leg span{display:inline-flex;align-items:center;gap:8px}
+.leg i{width:11px;height:11px;border-radius:3px;display:inline-block;flex:0 0 auto}
+
+/* ── BY CATEGORY ────────────────────────────────────────────────────────
+   The same two-line bar the grooming screens use, so the Hub draws a magnitude
+   one way rather than three. Each bar wears its category's colour, matching
+   the segment above it. */
+.tyrow{margin-bottom:18px}
+.tytop{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:6px}
+.tyname{font-size:15.5px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+.tyname i{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+.tyn{font-size:15px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.tyn span{color:var(--muted);font-weight:400;margin-left:8px}
+.tytrack{height:14px;background:rgba(27,30,43,.06);border-radius:0 4px 4px 0}
+.tyfill{height:14px;border-radius:0 4px 4px 0}
+.tyterms{display:flex;gap:0;flex-wrap:wrap;margin-top:7px}
+
+/* A MIDDLE DOT BETWEEN THE LABEL AND ITS NUMBER, and a hairline between one
+   chip and the next. "Term 1 5" ran two tokens together with nothing to say
+   where one ended; the dot separates them without adding a third weight, and
+   the rule stops "5 Term 2" reading as a phrase of its own.
+   THE NUMBER STAYS IN THE BODY FACE — it was set in Fraunces, a display face,
+   which runs several points larger at the same nominal size. */
+.tchip{font-size:13px;color:var(--muted);white-space:nowrap;padding:0 15px;
+  border-left:1px solid var(--line)}
+.tchip:first-child{padding-left:0;border-left:0}
+.tchip:last-child{padding-right:0}
+.tchip i{font-style:normal;color:#b8b2a6;margin:0 7px}
+.tchip b{font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums}
+
+/* ── GROOMING ───────────────────────────────────────────────────────────
+   ONE HUE, NOT AN EIGHTH CATEGORICAL SLOT. Grooming has its own eight
+   categories; painting them from the same set would put fifteen hues on one
+   page, five past the point where adjacent colours stop being tellable apart.
+   It is a different system with a different meaning, so it reads as one. */
+.gsec{margin-top:6px}
+.gfig{display:flex;gap:34px;flex-wrap:wrap;margin:4px 0 16px}
+.gfig div{min-width:88px}
+.gfig b{display:block;font-family:'Fraunces',Georgia,serif;
+  font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;font-weight:600;font-size:34px;line-height:1}
+.gfig span{display:block;font-size:12px;color:var(--muted);margin-top:6px}
+.gm{display:flex;gap:10px;align-items:flex-end;height:112px;margin-bottom:2px}
+.gmc{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.gmb{width:100%;max-width:24px;background:#27326a;border-radius:4px 4px 0 0;min-height:3px}
+.gmb.nil{background:rgba(27,30,43,.07);height:3px;border-radius:0}
+.gmn{font-size:11.5px;font-weight:600;margin-bottom:5px;font-variant-numeric:tabular-nums}
+.gmn.zero{color:transparent}
+
+/* ── THE FOLDS ──────────────────────────────────────────────────────────
+   THE ARROW IS 26px AND THE ROW IS TALLER. It was a 15px grey chevron, about
+   the size of a full stop at arm's length — and it is the only control on the
+   page that reveals anything. The person who cannot see it is the person least
+   likely to go hunting for it. The whole row is the button, so the target is
+   the width of the page rather than the width of the arrow. */
+.fold{border:1px solid var(--line);border-radius:10px;background:var(--raised);
+  margin-bottom:8px;overflow:hidden}
+.foldh{display:flex;align-items:center;gap:16px;padding:17px 18px;cursor:pointer;
+  user-select:none;background:none;border:0;width:100%;text-align:left;font:inherit;color:var(--ink)}
+.foldh:hover{background:var(--accent-tint)}
+.foldh:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.foldh .fchev{font-size:26px;line-height:1;width:20px;text-align:center;color:var(--accent);
+  transition:transform .2s var(--curve)}
+.foldh:hover .fchev{color:var(--accent-deep)}
+.fold.open .foldh .fchev{transform:rotate(90deg)}
+.foldh .fdot{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+.foldh .fname{flex:1;font-size:16.5px;font-weight:600}
+.foldh .fname em{font-style:normal;font-weight:400;color:var(--muted);font-size:13px;margin-left:8px}
+.foldh .fsum{display:flex;gap:0;white-space:nowrap}
+.foldb{display:none;padding:2px 14px 14px}
+.fold.open .foldb{display:block}
+.foldb .tlrow{background:var(--paper)}
+@media (max-width:640px){
+  .yrplot{height:150px} .gm{height:84px} .ghdr{font-size:19px}
+  .foldh .fsum{display:none}
+}
+
+
 /* ── charts ─────────────────────────────────────────────────────────────
    A ranked bar and a row of headline figures. The bar is 14px — capped well
    under the 24px ceiling so the band's leftover stays as air — square where it
@@ -474,6 +598,11 @@ var S = {
      "reading", not "could not be read" — null cannot tell those apart. */
   pending:{ det:false, early:false, groom:false },
 
+  /* The open student's grooming record, and whether it is still coming. It
+     lives in a different spreadsheet and is fetched only when a student page
+     opens — never on the menu read, which the sign-in waits behind. */
+  gstu:null, gLoading:false,
+
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
   student:null,         // { id, name, cls, cohort, domain, row } — who is open
@@ -819,6 +948,7 @@ function signOut(){
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
   S.early=null; S.groom=null; S.etab='term'; S.gtab='students'; S.from='';
   S.pending={ det:false, early:false, groom:false };
+  S.gstu=null; S.gLoading=false;
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   render(true);
@@ -1144,6 +1274,7 @@ function openStudent(entryId){
   S.hLoading = true;
   go('student');
   loadHistory(x.id);
+  loadGroomingStudent({ id: x.id, name: x.name, cls: x.cls });
 }
 
 /* Every snapshot row for this student, worst ladder first. */
@@ -1151,6 +1282,25 @@ function laddersOfStudent(){
   if (!S.student) return [];
   return allRows().filter(function(r){ return r.id === S.student.id; })
     .sort(function(a,b){ return (b.tier - a.tier) || String(a.domain).localeCompare(String(b.domain)); });
+}
+
+/* The grooming read for one student. Resolves rather than rejects and leaves
+   null behind on failure — a grooming spreadsheet that will not open should
+   cost you one section of this page and nothing else on it. */
+function loadGroomingStudent(x){
+  S.gLoading = true; S.gstu = null;
+  return api('hubGroomingStudent', { token: TOKEN, studentId: x.id, name: x.name, cls: x.cls })
+    .then(function(r){
+      S.gLoading = false;
+      S.gstu = (r && (r.ok || r.connected !== undefined)) ? r : null;
+      /* Only redraw if the person is still on this student. A slow read that
+         lands after they have gone back to the list must not repaint. */
+      if (TOKEN && S.view === 'student') render();
+    })
+    .catch(function(){
+      S.gLoading = false; S.gstu = null;
+      if (TOKEN && S.view === 'student') render();
+    });
 }
 
 function loadHistory(id){
@@ -1233,48 +1383,249 @@ function groupedHistory(){
   });
 }
 
-function timelineHtml(){
-  if (S.hLoading){
-    return '<div class="loading"><div class="spin"></div>' +
-      '<div><b>Reading the whole academic year&hellip;</b>' +
-      '<span>Every offence, every term, including the ones that stopped counting.</span></div></div>' +
-      '<div class="skel"><i></i><i></i><i></i></div>';
-  }
-  if (S.hErr) return '<div class="note err">' + esc(S.hErr) + '</div>';
-  if (!S.history) return '';
-  var groups = groupedHistory();
-  if (!groups.length) return '<div class="blank">Nothing recorded this academic year.</div>';
+/* ── THE YEAR, AS A CHART ──────────────────────────────────────────────────
+   COLOUR IS ASSIGNED BY CATEGORY IN A FIXED ORDER, NEVER CYCLED, so a student
+   with only lates and green slips wears the same blue and the same violet as a
+   student with all seven. The hues are muted to one chroma and one lightness —
+   which is what makes seven colours read as one family rather than seven
+   signals, and which also lifted every one of them clear of 3:1 against this
+   paper, where the brighter set had four below it.
 
-  return groups.map(function(g){
-    var termBits = Object.keys(g.terms).sort().map(function(t){
-      return '<span class="tsub">Term ' + esc(t) + ' <b>' + g.terms[t] + '</b></span>';
+   THE ORDER IS NOT COSMETIC. It was searched: at this chroma it is the only
+   ordering that clears the colour-blind gates, and the worst pair sits in the
+   floor band, which is permitted only with a second identity channel. There
+   are three — the legend names every category, the stacked segments are parted
+   by surface gaps rather than touching, and every figure is repeated with its
+   label below. Do not reorder these, and do not add an eighth. */
+var STATUS_HUE = {
+  'LATE':   '#5088d0',
+  'A(WOR)': '#c46948',
+  'A(VRP)': '#249d6f',
+  'A(VRO)': '#b17a15',
+  'A(PR)':  '#c16387',
+  'A(MC)':  '#569951',
+  'ED':     '#7d7ace'
+};
+/* A code that is not in the map is a status somebody added to ⚙️ Statuses that
+   this page has never been told about. It draws grey rather than borrowing a
+   colour that already means something else. */
+function hueFor(code){ return STATUS_HUE[String(code||'').trim()] || '#8d8a83'; }
+
+var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function monthOf(d){ var m = /^\d{1,2}\s+([A-Za-z]{3})/.exec(String(d||'')); return m ? m[1] : ''; }
+
+function yearChartHtml(){
+  var rows = (S.history && S.history.rows) || [];
+  var cats = [], seen = {};
+  rows.forEach(function(r){
+    if (!/counted/i.test(stateOf(r))) return;
+    var k = String(r.status || '').trim();
+    if (k && !seen[k]){ seen[k] = 1; cats.push(k); }
+  });
+  cats.sort(function(a,b){ return statusRank(a) - statusRank(b) || a.localeCompare(b); });
+  if (!cats.length) return '<div class="blank">Nothing recorded this academic year.</div>';
+
+  var by = {}, tot = {}, max = 0;
+  MONTHS.forEach(function(m){ by[m] = {}; tot[m] = 0; });
+  rows.forEach(function(r){
+    if (!/counted/i.test(stateOf(r))) return;
+    var m = monthOf(r.date); if (!by[m]) return;      // unparseable date: not plotted, still listed below
+    var k = String(r.status || '').trim();
+    by[m][k] = (by[m][k] || 0) + 1;
+    tot[m]++;
+    if (tot[m] > max) max = tot[m];
+  });
+
+  var PX = 172;
+  var cols = MONTHS.map(function(m){
+    if (!tot[m]){
+      return '<div class="yrcol" title="' + m + ' &mdash; nothing recorded">' +
+        '<span class="yrn zero">0</span><div class="yrnil"></div></div>';
+    }
+    var here = cats.filter(function(c){ return by[m][c]; });
+    var segs = here.map(function(c, i){
+      var h = Math.max(Math.round((by[m][c] / max) * PX), 5);
+      return '<div class="yrseg' + (i === 0 ? ' top' : '') + (i < here.length - 1 ? ' gap' : '') +
+        '" style="height:' + h + 'px;background:' + hueFor(c) + '" title="' +
+        esc(m + ' — ' + by[m][c] + ' ' + statusLabel(c)) + '"></div>';
     }).join('');
+    return '<div class="yrcol"><span class="yrn">' + tot[m] + '</span>' +
+      '<div class="yrstack">' + segs + '</div></div>';
+  }).join('');
 
-    var head = '<div class="ghead"><div class="gh">' + esc(statusLabel(g.code)) +
-      (statusLabel(g.code) !== g.code ? ' <small>' + esc(g.code) + '</small>' : '') + '</div>' +
-      (g.counts
-        ? '<div class="gsum">' + termBits + '<span class="tsub yr">This year <b>' + g.year + '</b></span></div>'
-        : '<div class="gsum"><span class="tag quiet">recorded, does not count</span></div>') +
-      (g.setAside ? '<div class="gaside">' + g.setAside + ' not counted &mdash; waived or overturned</div>' : '') +
-    '</div>';
+  var axis = MONTHS.map(function(m){
+    return '<div class="yrm' + (tot[m] ? ' on' : '') + '">' + m + '</div>'; }).join('');
+  var legend = '<div class="leg">' + cats.map(function(c){
+    return '<span><i style="background:' + hueFor(c) + '"></i>' + esc(statusLabel(c)) + '</span>';
+  }).join('') + '</div>';
 
-    /* TERMS ARE SEPARATED, NOT JUST SUBTOTALLED. The ladder is read against a
-       term count, so which term a row falls in is the single most consequential
-       thing about it after the date. */
-    var body = '', lastTerm = null;
-    g.rows.forEach(function(r){
-      var t = (r.term === '' || r.term === null || r.term === undefined) ? '?' : String(r.term);
-      if (t !== lastTerm){
-        var n = g.terms[t];
-        body += '<div class="tdiv"><span>' + (t === '?' ? 'No term' : 'Term ' + esc(t)) + '</span>' +
-          (g.counts && n !== undefined ? '<b>' + n + '</b>' : '') + '</div>';
-        lastTerm = t;
-      }
-      body += rowLineHtml(r);
-    });
-    return head + '<div class="tl">' + body + '</div>';
+  return '<div class="yr">' + legend + '<div class="yrplot">' + cols + '</div>' +
+    '<div class="yraxis">' + axis + '</div></div>';
+}
+
+/* ── THE ONE SENTENCE ON THIS PAGE THAT DRAWS A CONCLUSION ─────────────────
+   It says which of two conversations this is, and the colour carries that
+   rather than decorating it.
+
+   A CONCENTRATION IN THE TERM WE ARE IN means something started — a new bus
+   route, something at home, a friendship group. That is a heads-up: amber.
+
+   A CONCENTRATION IN AN EARLIER TERM, with the current one quieter, means the
+   opposite: whatever it was has passed, and the year total is carrying
+   history. Amber there would point a conversation at a student who sorted
+   themselves out in March, which is the more damaging of the two errors.
+
+   NEITHER IS GREEN. This page does not congratulate anybody. It is silent
+   unless one term genuinely holds half the year or more. */
+function concentrationHtml(){
+  var rows = (S.history && S.history.rows) || [];
+  var byTerm = {}, total = 0;
+  rows.forEach(function(r){
+    if (!/counted/i.test(stateOf(r))) return;
+    if (!statusCounts(r.status)) return;
+    var t = (r.term === '' || r.term === null || r.term === undefined) ? '' : String(r.term);
+    if (!t) return;
+    var n = Number(r.counts) || 0;
+    byTerm[t] = (byTerm[t] || 0) + n;
+    total += n;
+  });
+  var terms = Object.keys(byTerm).sort();
+  if (!total || !terms.length) return '';
+  var latest = terms[terms.length - 1];
+  var topT = '', topN = 0;
+  terms.forEach(function(t){ if (byTerm[t] > topN){ topN = byTerm[t]; topT = t; } });
+  if (topN / total < 0.5) return '';
+
+  return topT === latest
+    ? '<div class="note warn"><b>' + topN + ' of the ' + total + ' fall in Term ' + esc(topT) +
+      ', the term we are in.</b> This is something recent rather than a year-long pattern, ' +
+      'which is usually a different conversation to have.</div>'
+    : '<div class="note"><b>' + topN + ' of the ' + total + ' fall in Term ' + esc(topT) +
+      ', and it has been quieter since.</b> The year total is carrying something that has ' +
+      'largely passed &mdash; worth knowing before reading the figures above as a description ' +
+      'of how things are now.</div>';
+}
+
+/* Term 1 · 5 | Term 2 · 2. The dot separates the label from its number without
+   adding a third weight; the rule stops "5 Term 2" reading as a phrase. */
+function chipsHtml(g){
+  if (!g.counts) return '<span class="tchip">(NA)</span>';
+  var out = Object.keys(g.terms).sort().map(function(t){
+    return '<span class="tchip">' + (t === '?' ? 'No term' : 'Term ' + esc(t)) +
+      '<i>&middot;</i><b>' + g.terms[t] + '</b></span>';
+  }).join('');
+  if (g.setAside) out += '<span class="tchip">Set aside<i>&middot;</i><b>' + g.setAside + '</b></span>';
+  return out || '<span class="tchip">(NA)</span>';
+}
+
+function categoriesHtml(gs){
+  var max = 0;
+  gs.forEach(function(g){ var v = g.counts ? g.year : g.rows.length; if (v > max) max = v; });
+  return '<div class="viz">' + gs.map(function(g){
+    var v = g.counts ? g.year : g.rows.length;
+    var w = max ? Math.max((v / max) * 100, 1.5) : 1.5;
+    return '<div class="tyrow" title="' + esc(statusLabel(g.code) + ' — ' + v + ' this year') + '">' +
+      '<div class="tytop">' +
+        '<span class="tyname"><i style="background:' + hueFor(g.code) + '"></i>' +
+          esc(statusLabel(g.code)) + '</span>' +
+        '<span class="tyn">' + v + '<span>this year</span></span></div>' +
+      '<div class="tytrack"><div class="tyfill" style="width:' + w + '%;background:' +
+        hueFor(g.code) + '"></div></div>' +
+      '<div class="tyterms">' + chipsHtml(g) + '</div></div>';
+  }).join('') + '</div>';
+}
+
+/* ── GROOMING, READ FROM THE OTHER SPREADSHEET ─────────────────────────── */
+function groomStudentHtml(){
+  if (S.gLoading){
+    return '<div class="loading"><div class="spin"></div>' +
+      '<div><b>Reading the Grooming Tracker&hellip;</b>' +
+      '<span>It is a different spreadsheet, so it takes a moment.</span></div></div>';
+  }
+  var d = S.gstu;
+  if (!d) return '<div class="note warn">The Grooming Tracker could not be read. Nothing else ' +
+    'on this page is affected by that.</div>';
+  if (!d.connected) return '<div class="note">' + esc(d.error || 'Not connected yet.') + '</div>';
+  if (!d.year) return '<div class="blank">No grooming or attire offences this year.</div>';
+
+  var maxM = 0;
+  MONTHS.forEach(function(m){ var n = d.byMonth[m] || 0; if (n > maxM) maxM = n; });
+  var strip = MONTHS.map(function(m){
+    var n = d.byMonth[m] || 0;
+    var h = n ? Math.max(Math.round((n / maxM) * 88), 5) : 3;
+    return '<div class="gmc" title="' + m + ' &mdash; ' + n + '">' +
+      '<span class="gmn' + (n ? '' : ' zero') + '">' + n + '</span>' +
+      '<div class="gmb' + (n ? '' : ' nil') + '" style="height:' + h + 'px"></div></div>';
+  }).join('');
+  var axis = MONTHS.map(function(m){
+    return '<div class="yrm' + ((d.byMonth[m] || 0) ? ' on' : '') + '">' + m + '</div>'; }).join('');
+
+  var maxC = (d.byCat[0] || {}).n || 1;
+  var bars = d.byCat.map(function(c){
+    return '<div class="tyrow"><div class="tytop">' +
+      '<span class="tyname">' + esc(c.name) + '</span>' +
+      '<span class="tyn">' + c.n + '<span>this year</span></span></div>' +
+      '<div class="tytrack"><div class="tyfill" style="width:' +
+        Math.max((c.n / maxC) * 100, 1.5) + '%;background:#27326a"></div></div>' +
+      (c.open ? '<div class="tyterms"><span class="tchip">Not yet fixed<i>&middot;</i><b>' +
+        c.open + '</b></span></div>' : '') + '</div>';
+  }).join('');
+
+  var detail = d.rows.map(function(r){
+    var tag = r.status === 'Resolved' ? '<span class="tag ok">fixed</span>'
+      : r.lastOutcome === 'Did Not Report' ? '<span class="tag t5">did not report</span>'
+      : '<span class="tag t3">still open</span>';
+    return '<div class="tlrow"><div class="tld">' + esc(r.date) + '</div>' +
+      '<div class="tlb"><b>' + esc(r.catName) + '</b> ' + tag +
+        (r.remarks ? '<div class="rem">' + esc(r.remarks) + '</div>' : '') + '</div>' +
+      '<div class="tla"></div></div>';
+  }).join('');
+
+  return '<div class="gsec"><div class="gfig">' +
+      '<div><b>' + d.term + '</b><span>this term</span></div>' +
+      '<div><b>' + d.year + '</b><span>this year</span></div>' +
+      '<div><b>' + d.open + '</b><span>not yet fixed</span></div>' +
+      (d.noShow ? '<div><b>' + d.noShow + '</b><span>did not report</span></div>' : '') +
+    '</div>' +
+    '<div class="gm">' + strip + '</div><div class="yraxis">' + axis + '</div>' +
+    '<div class="viz" style="margin-top:22px">' + bars + '</div>' +
+    '<div class="fold" id="fg">' +
+      '<button class="foldh" type="button" data-fold="fg">' +
+        '<span class="fchev">&rsaquo;</span>' +
+        '<span class="fdot" style="background:#27326a"></span>' +
+        '<span class="fname">Every grooming record<em>' + d.rows.length + ' record' +
+          (d.rows.length === 1 ? '' : 's') + '</em></span>' +
+        '<span class="fsum">' + (d.open ? '<span class="tchip">Not yet fixed<i>&middot;</i><b>' +
+          d.open + '</b></span>' : '') + '</span>' +
+      '</button><div class="foldb">' + detail + '</div></div></div>';
+}
+
+/* ── THE FULL RECORD, FOLDED ───────────────────────────────────────────────
+   Every row is still here and still one click from the surface. Shut by
+   default: a page that opens with sixty rows is a page nobody reads to the
+   bottom, and the bottom is the oldest records — which is what a pattern is
+   made of. */
+function foldsHtml(gs){
+  return gs.map(function(g, i){
+    var id = 'fold' + i;
+    return '<div class="fold" id="' + id + '">' +
+      '<button class="foldh" type="button" data-fold="' + id + '">' +
+        '<span class="fchev">&rsaquo;</span>' +
+        '<span class="fdot" style="background:' + hueFor(g.code) + '"></span>' +
+        '<span class="fname">' + esc(statusLabel(g.code)) +
+          '<em>' + g.rows.length + ' record' + (g.rows.length === 1 ? '' : 's') + '</em></span>' +
+        '<span class="fsum">' + chipsHtml(g) + '</span></button>' +
+      '<div class="foldb">' + g.rows.map(rowLineHtml).join('') + '</div></div>';
   }).join('');
 }
+
+function historyLoadingHtml(){
+  return '<div class="loading"><div class="spin"></div>' +
+    '<div><b>Reading the whole academic year&hellip;</b>' +
+    '<span>Every offence, every term, including the ones that stopped counting.</span></div></div>' +
+    '<div class="skel"><i></i><i></i><i></i></div>';
+}
+
 
 function rowLineHtml(r){
   var st = stateOf(r);
@@ -1414,12 +1765,12 @@ function studentHtml(){
      IT IS GOOD NEWS AND IT SAYS SO. Everything below this point still works:
      the whole academic year is read from 📋 Log, not from the snapshot. */
   var stand = !mine.length
-    ? '<div class="grouplabel">Where they stand</div>' +
+    ? '<div class="ghdr">Immediate concerns</div>' +
       '<div class="note ok"><b>' + esc(x.name) + ' is not on any follow-up ladder.</b> ' +
       'Nothing here is outstanding. Their full record for the year is below &mdash; it is read ' +
       'from &#128203; Log directly, so it is complete whether or not they have ever reached a ' +
       'ladder.</div>'
-    : '<div class="grouplabel">Where they stand &mdash; from the snapshot</div>' +
+    : '<div class="ghdr">Immediate concerns</div>' +
     '<div class="lgrid">' + mine.map(function(r){
       var here = (r.entryId === x.entryId);
       var thu  = (r.domain === 'Thursday privilege');
@@ -1480,14 +1831,25 @@ function studentHtml(){
         '</div>'
       : '')) +
 
-    '<div class="grouplabel">Everything recorded in ' +
-      (S.history ? esc(S.history.academicYear) : 'the academic year') +
-      ', by type</div>' +
-    '<div class="note">This is the whole academic year, not this term &mdash; the term ' +
-      'subtotals under each heading are what the figures above are built from. ' +
-      'Statuses the school does not hold against a student, such as a medical certificate, ' +
-      'are listed for context and marked as not counting.</div>' +
-    timelineHtml() +
+    /* ── THE YEAR, IN THREE PARTS ────────────────────────────────────────
+       It was one flat list. That served the evidence and buried the shape,
+       and the shape is what somebody opening a student page is looking for.
+       A chart for WHEN, a compact block for WHAT, the list folded for the
+       evidence. Nothing was removed. */
+    (S.hLoading ? historyLoadingHtml()
+     : S.hErr ? '<div class="note err">' + esc(S.hErr) + '</div>'
+     : !S.history ? ''
+     : ('<div class="ghdr">The year at a glance</div>' +
+        yearChartHtml() +
+        concentrationHtml() +
+        '<div class="ghdr">By category</div>' +
+        categoriesHtml(groupedHistory()) +
+        '<div class="ghdr">Grooming and attire</div>' +
+        groomStudentHtml() +
+        '<div class="ghdr">Full record</div>' +
+        '<div class="lede">Open a category to see every date it covers, the remarks ' +
+          'against each one, and to excuse one.</div>' +
+        foldsHtml(groupedHistory()))) +
     ladderTableHtml(x) +
     '<div class="foot"><span>Excusing an offence never edits what was recorded. The row stays; ' +
       'its state changes, with who decided and why.</span></div>' +
@@ -1726,6 +2088,7 @@ function openStudentFromEarly(studentId){
   S.hLoading = true;
   go('student');
   loadHistory(rec.studentId);
+  loadGroomingStudent({ id: rec.studentId, name: rec.name, cls: rec.cls });
 }
 
 
@@ -2550,6 +2913,17 @@ function wire(){
        that carries both from silently taking the wrong path. */
     var eopn = t.closest && t.closest('[data-eopen]');
     if (eopn){ e.stopPropagation(); openStudentFromEarly(eopn.getAttribute('data-eopen')); return; }
+
+    /* THE WHOLE ROW IS THE BUTTON, which is what makes the target the width
+       of the page rather than the width of the arrow. Toggled on the element
+       rather than in S on purpose: a fold that survived a re-render would
+       spring open again every time a figure refreshed underneath it. */
+    var fld = t.closest && t.closest('[data-fold]');
+    if (fld){
+      var box = $(fld.getAttribute('data-fold'));
+      if (box) box.classList.toggle('open');
+      return;
+    }
 
     var opn = t.closest && t.closest('[data-open]');
     if (opn){ e.stopPropagation(); openStudent(opn.getAttribute('data-open')); return; }

@@ -93,6 +93,46 @@ h2{font-size:24px;margin-bottom:4px}
   transition:border-color .28s var(--curve)}
 .field textarea{font-size:16.5px;resize:vertical;line-height:1.5;border:1.5px solid var(--line);
   border-radius:9px;padding:11px 13px}
+/* THE PASSWORD REVEAL, as on the two phone pages. A committee password typed
+   on a laptop in a staffroom is mistyped as often as one typed on a phone, and
+   the second thing anybody does after a failed sign-in is type it wrong again.
+   The eye is a BUTTON, not a checkbox, and it is type="button" — inside a form
+   a bare <button> submits, which would have signed you in mid-peek. */
+.field.pw{position:relative}
+.field.pw input{padding-right:38px}
+.peek{position:absolute;right:0;bottom:5px;border:0;background:none;cursor:pointer;
+  padding:7px 2px;color:var(--muted);transition:color .2s var(--curve)}
+.peek:hover{color:var(--accent)}
+.peek svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round;display:block}
+.peek .slash{opacity:0;transition:opacity .2s var(--curve)}
+.peek.showing .slash{opacity:1}
+.peek:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:5px}
+
+/* ── charts ─────────────────────────────────────────────────────────────
+   A ranked bar and a row of headline figures. The bar is 14px — capped well
+   under the 24px ceiling so the band's leftover stays as air — square where it
+   leaves the baseline and rounded 4px at the data end, which is the only end
+   the reader measures. The track behind it is one step off the surface and
+   carries no data; it exists so a short bar still has a length to be short
+   against. No border on the fill: ink that is not data. */
+.kpi{display:flex;gap:38px;flex-wrap:wrap;margin:22px 0 4px;padding-bottom:20px;
+  border-bottom:1px solid var(--line)}
+.kpi div{min-width:92px}
+.kpi b{display:block;font-family:'Fraunces',Georgia,serif;
+  font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;font-weight:600;
+  font-size:41px;line-height:1;letter-spacing:-.02em}
+.kpi span{display:block;font-size:12px;color:var(--muted);margin-top:7px;letter-spacing:.02em}
+.viz{margin:16px 0 26px}
+.vrow{margin-bottom:17px}
+.vtop{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:6px}
+.vname{font-size:15.5px;font-weight:600;letter-spacing:-.01em}
+.vval{font-size:15px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.vpct{color:var(--muted);font-weight:400;margin-left:8px}
+.vtrack{height:14px;background:rgba(27,30,43,.06);border-radius:0 4px 4px 0}
+.vfill{height:14px;background:#27326a;border-radius:0 4px 4px 0}
+.vsub{font-size:12.5px;color:var(--muted);margin-top:5px}
+@media (max-width:640px){ .kpi{gap:26px} .kpi b{font-size:34px} }
 .field input:focus,.field textarea:focus{border-bottom-color:var(--accent);border-color:var(--accent)}
 
 .stack{display:flex;flex-direction:column;gap:9px;margin-top:28px;max-width:430px}
@@ -176,8 +216,11 @@ button.sm{font-size:14px;padding:9px 15px}
 .stats{display:flex;flex:0 0 auto}
 .stat{text-align:center;padding:0 16px;border-left:1px solid rgba(0,0,0,.09)}
 .stat:first-child{border-left:0}
-.stat .k{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.13em;color:var(--muted);white-space:nowrap}
-.stat .v{font-size:27px;font-weight:600;line-height:1.15;font-family:'Fraunces',Georgia,serif;
+/* The label sits under the figure with air between them. Without the gap the
+   two read as one stacked lump and the eye has to separate them itself. */
+.stat .k{display:block;margin-top:5px;font-size:9.5px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.13em;color:var(--muted);white-space:nowrap}
+.stat .v{display:block;font-size:27px;font-weight:600;line-height:1.15;font-family:'Fraunces',Georgia,serif;
   font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1}
 .tierslot{flex:0 0 230px;text-align:right}
 .rowgo{flex:0 0 auto;display:flex;align-items:center;gap:0;margin-left:6px;padding:8px 6px 8px 2px;
@@ -426,6 +469,10 @@ var S = {
      the person came from. '' means a snapshot area, which is the old path and
      the default. */
   from:'',
+
+  /* Which background reads are still in flight. A row that has not arrived says
+     "reading", not "could not be read" — null cannot tell those apart. */
+  pending:{ det:false, early:false, groom:false },
 
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
@@ -685,16 +732,58 @@ function signIn(){
   });
 }
 
-/* Three reads. The snapshot is the only one the menu cannot do without. */
+/* ── WHY SIGNING IN USED TO TAKE SO LONG, AND WHAT WAS DONE ────────────────
+   Four reads ran ONE AFTER ANOTHER and the menu waited for the last of them.
+   Each is a separate round trip to Apps Script, each takes a second or three
+   on its own, and two of the four are heavy: hubEarly walks the whole 📋 Log
+   and hubGrooming opens a SECOND SPREADSHEET. Adding those two on 3 August
+   roughly doubled a wait that was already too long — the cost was invisible
+   in the code, because a chain of .then() looks the same whether the calls
+   are quick or slow.
+
+   THREE OF THE FOUR ARE NOT WORTH WAITING FOR. Only the snapshot is load-
+   bearing: every latecoming and attendance figure comes from it, and there is
+   no menu without it. Detention, early dismissal and grooming each fill in one
+   menu row. So the snapshot is awaited and the other three are fired at the
+   same moment as each other, each re-drawing its own row as it lands. Sign-in
+   is now as slow as the snapshot alone, which is as fast as it can honestly be.
+
+   THEY ARE NOT AWAITED TOGETHER EITHER. Promise.all would have made the menu
+   wait for grooming — the slowest, because of the second spreadsheet — before
+   showing detention, which may have arrived two seconds earlier. Each lands on
+   its own.
+
+   A ROW THAT HAS NOT ARRIVED SAYS "reading", NOT "could not be read". Those
+   are opposite facts and null cannot tell them apart, which is what S.pending
+   is for. Without it, every sign-in would flash three failure messages that
+   then quietly corrected themselves. */
 function loadAll(){
   return api('hubSnapshot', { token: TOKEN }).then(function(res){
     if (!res || !res.ok) throw new Error((res&&res.error) || 'The snapshot could not be read.');
     S.snap = res;
-    return api('hubDetention', { token: TOKEN }).then(function(d){
-      S.det = (d && d.ok) ? d : null;      // null = "we do not know what is booked"
-    }).catch(function(){ S.det = null; })
-    .then(loadEarly).then(loadGrooming);
+    startBackgroundReads();
   });
+}
+
+function loadDetention(){
+  return api('hubDetention', { token: TOKEN }).then(function(d){
+    S.det = (d && d.ok) ? d : null;        // null = "we do not know what is booked"
+  }).catch(function(){ S.det = null; });
+}
+
+function startBackgroundReads(){
+  S.pending = { det: true, early: true, groom: true };
+  function settle(key){
+    return function(){
+      S.pending[key] = false;
+      /* Guarded on the token: a read still in flight when somebody signs out
+         must not redraw a signed-in screen behind the sign-in page. */
+      if (TOKEN && S.view !== 'signin') render();
+    };
+  }
+  loadDetention().then(settle('det'));
+  loadEarly().then(settle('early'));
+  loadGrooming().then(settle('groom'));
 }
 
 /* THESE TWO ARE LIVE, AND THAT IS THE WHOLE DIFFERENCE. Every other count on
@@ -729,6 +818,7 @@ function signOut(){
   TOKEN=null; S.teachers=null;
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
   S.early=null; S.groom=null; S.etab='term'; S.gtab='students'; S.from='';
+  S.pending={ det:false, early:false, groom:false };
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   render(true);
@@ -786,8 +876,15 @@ function signinHtml(){
     '<div class="gap"></div>' +
     '<div class="field"><label>Your name</label>' +
       '<input id="nm" autocomplete="name" value="' + esc(S.name || S.user) + '"></div>' +
-    '<div class="field"><label>Committee password</label>' +
-      '<input type="password" id="pw" autocomplete="current-password" autocapitalize="off" spellcheck="false"></div>' +
+    '<div class="field pw"><label>Committee password</label>' +
+      '<input type="password" id="pw" autocomplete="current-password" autocapitalize="off" spellcheck="false">' +
+      '<button type="button" class="peek" id="peek" aria-label="Show the password" title="Show the password">' +
+        '<svg viewBox="0 0 24 24">' +
+          '<path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z"/>' +
+          '<circle cx="12" cy="12" r="3.2"/>' +
+          '<path class="slash" d="M3.5 3.5l17 17"/>' +
+        '</svg>' +
+      '</button></div>' +
     '<div class="stack"><button id="go"' + (S.busy?' disabled':'') + '>' +
       (S.busy ? 'Logging in&hellip;' : 'Login') + '</button></div>' +
     (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') +
@@ -818,7 +915,10 @@ function menuHtml(){
      deliberately not summed: the first is students who have crossed a line and
      the second is everybody who has left early at all, and a single total would
      let four students worth a conversation hide inside a quiet-looking thirty. */
-  if (!S.early){
+  if (S.pending.early){
+    rows += '<div class="mrow" data-area="__early"><div class="mt">Early dismissals' +
+      '<em>reading the green slip record&hellip;</em></div></div>';
+  } else if (!S.early){
     rows += '<div class="mrow" data-area="__early"><div class="mt">Early dismissals' +
       '<em>the green slip record could not be read &mdash; open it for the reason</em></div></div>';
   } else {
@@ -834,7 +934,10 @@ function menuHtml(){
   /* GROOMING AND ATTIRE. A read across into the other spreadsheet, so it has
      three states rather than two and the third is the interesting one: the
      tracker exists and works, but nobody has told this Hub where it is. */
-  if (!S.groom){
+  if (S.pending.groom){
+    rows += '<div class="mrow" data-area="__groom"><div class="mt">Grooming and attire' +
+      '<em>reading the grooming tracker&hellip;</em></div></div>';
+  } else if (!S.groom){
     rows += '<div class="mrow" data-area="__groom"><div class="mt">Grooming and attire' +
       '<em>the grooming tracker could not be read &mdash; open it for the reason</em></div></div>';
   } else if (!S.groom.connected){
@@ -1496,6 +1599,7 @@ function earlyRowHtml(x, span, at){
 }
 
 function earlyHtml(){
+  if (S.pending.early) return readingHtml('the green slip record');
   if (!S.early){
     return '<div class="screen centre"><div class="wrap">' +
       '<h1 class="big">The green slip record could not be read.</h1>' +
@@ -1643,7 +1747,79 @@ function openStudentFromEarly(studentId){
    is who to talk to. By class is who to ask a form teacher about. By category
    is what to say at assembly. */
 
+/* ── the bar, and why it is not a pie ──────────────────────────────────────
+   Kim asked for "a pie chart sorta thing to make the data/percentage more
+   obvious". The percentages are the ask and they are here; the pie is not, and
+   the reason is the data rather than a preference.
+
+   A pie reads at a glance only up to about six slices, and only when the
+   slices are not close in size. Grooming has EIGHT categories with long names —
+   "Multiple Earrings/Other Accessories" — and a realistic term will have three
+   or four of them within a few percent of each other. That is precisely the
+   shape a pie renders unreadable: the eye compares angles badly, the labels
+   will not fit inside the wedges, and the two categories somebody actually
+   wants to compare are usually on opposite sides of the circle.
+
+   A RANKED BAR ANSWERS THE SAME QUESTION BETTER. The order IS the ranking, the
+   lengths are directly comparable because they share one baseline, the long
+   names sit on their own line with room to be read, and the percentage is
+   printed rather than inferred from an angle. Everything a pie was going to
+   say is said here, and the close calls are readable.
+
+   ONE COLOUR, DELIBERATELY. There is one series, so colour carries no meaning
+   and a legend would restate the row labels. Eight hues would fail on
+   colour-blindness before it failed on taste — past roughly seven, adjacent
+   classes stop being tellable apart. The navy is the Hub's own accent; it was
+   checked against the page's surface for contrast rather than picked by eye.
+
+   THE TABLE STAYS, UNDER THE CHART. Every figure on the chart is in it, so
+   nothing here is reachable only by looking at a picture. */
+function vizRows(items, opts){
+  var max = 0;
+  items.forEach(function(it){ if (it.value > max) max = it.value; });
+  var total = 0;
+  items.forEach(function(it){ total += it.value; });
+  if (!items.length || !max) return '<div class="blank">Nothing to chart yet.</div>';
+
+  return '<div class="viz">' + items.map(function(it){
+    var pct = total ? Math.round((it.value / total) * 1000) / 10 : 0;
+    var w   = Math.max((it.value / max) * 100, 1.2);   // never a bar of literally nothing
+    return '<div class="vrow" title="' + esc(it.name + ' — ' + it.value + ' ' +
+             (opts.unit || '') + (total ? ' (' + pct + '% of the total)' : '')) + '">' +
+        '<div class="vtop">' +
+          '<span class="vname">' + esc(it.name) + '</span>' +
+          '<span class="vval">' + esc(it.valueLabel !== undefined ? it.valueLabel : it.value) +
+            (opts.showPct ? '<span class="vpct">' + pct + '%</span>' : '') + '</span>' +
+        '</div>' +
+        '<div class="vtrack"><div class="vfill" style="width:' + w + '%"></div></div>' +
+        /* sub is NOT escaped, and it is the only field here that is not. It is
+           built from numbers and separators by the two callers below and never
+           carries a value from the sheet — the fields that do, name and the
+           tooltip, are both escaped. If a caller is ever added that puts sheet
+           text in here, escape it there. */
+        (it.sub ? '<div class="vsub">' + it.sub + '</div>' : '') +
+      '</div>';
+  }).join('') + '</div>';
+}
+
+/* The four numbers somebody wants before they want any breakdown at all. A
+   handful of headline figures is a row of tiles, not a chart — there is
+   nothing to compare, so there is nothing to plot. */
+function groomKpiHtml(d){
+  var heads = {};
+  (d.students || []).forEach(function(s){ heads[s.name + '|' + s.cls] = 1; });
+  var term = 0, year = 0;
+  (d.categories || []).forEach(function(c){ term += c.term; year += c.year; });
+  return '<div class="kpi">' +
+    '<div><b>' + term + '</b><span>this term</span></div>' +
+    '<div><b>' + year + '</b><span>this year</span></div>' +
+    '<div><b>' + Object.keys(heads).length + '</b><span>students involved</span></div>' +
+    '<div><b>' + (d.openTotal || 0) + '</b><span>not yet fixed</span></div>' +
+  '</div>';
+}
+
 function groomHtml(){
+  if (S.pending.groom) return readingHtml('the grooming tracker');
   if (!S.groom){
     return '<div class="screen centre"><div class="wrap">' +
       '<h1 class="big">The grooming tracker could not be read.</h1>' +
@@ -1685,6 +1861,8 @@ function groomHtml(){
     '<a class="' + (tab==='classes'?'on':'')  + '" data-gtab="classes">By class</a>' +
     '<a class="' + (tab==='categories'?'on':'') + '" data-gtab="categories">By category</a>' +
   '</div>';
+
+  h += groomKpiHtml(d);
 
   if (!d.rows){
     h += '<div class="blank">No grooming offences recorded for ' + esc(d.academicYear) + '.</div>';
@@ -1750,7 +1928,37 @@ function groomClassesHtml(d){
      meaning, and both are here so nobody has to take that on trust. */
   var h = '<div class="note warn"><b>Read this one carefully.</b> A bigger class collects more ' +
     'offences than a smaller one whatever its form teacher does, so the total on its own ranks ' +
-    'classes by size. The per-student figure beside it is the comparable one.</div>' +
+    'classes by size. The per-student figure beside it is the comparable one.</div>';
+
+  /* THE CHART PLOTS PER STUDENT, NOT THE TOTAL, and the warning above is why.
+     A chart of raw totals would make the honest caveat in that box argue with
+     the picture directly beneath it — and the picture would win, because it is
+     a picture. So the comparable figure is the one given a length, and the raw
+     total sits underneath it as a numeral where it can be read but not
+     accidentally compared.
+
+     TOP FIFTEEN. Sixty bars is not a ranking, it is a wall; the table below
+     carries every class, and the cut is stated rather than silent. */
+  var top = (d.classes || []).slice().sort(function(a,b){
+    return (b.perStudent - a.perStudent) || (b.year - a.year) ||
+           String(a.cls).localeCompare(String(b.cls));
+  }).slice(0, 15);
+
+  h += '<div class="grouplabel">Offences per student &mdash; highest fifteen classes</div>' +
+    vizRows(top.map(function(c){
+      return { name: c.cls, value: c.perStudent, valueLabel: c.perStudent.toFixed(2),
+               unit: 'offences per student',
+               sub: c.year + ' this year across ' + c.students + ' student' +
+                    (c.students===1?'':'s') + ' &middot; ' + c.term + ' this term &middot; ' +
+                    c.open + ' not yet fixed' };
+    }), { showPct: false, unit: 'per student' }) +
+    ((d.classes || []).length > 15
+      ? '<div class="lede">' + ((d.classes||[]).length - 15) + ' more class' +
+        ((d.classes||[]).length - 15 === 1 ? '' : 'es') + ' below the fifteenth are in the ' +
+        'table below, which carries every class.</div>'
+      : '');
+
+  h += '<div class="grouplabel">Every class, as a table</div>' +
     '<table class="etbl"><thead><tr><th>Class</th><th class="c">This term</th>' +
     '<th class="c">This year</th><th class="c">Students</th><th class="c">Per student</th>' +
     '<th class="c">Not fixed</th></tr></thead><tbody>';
@@ -1764,7 +1972,19 @@ function groomClassesHtml(d){
 }
 
 function groomCategoriesHtml(d){
-  var h = '<div class="lede">What is actually being picked up. The students column is how many ' +
+  var cats = d.categories || [];
+
+  var h = '<div class="grouplabel">Share of every offence this year</div>' +
+    '<div class="lede">Ranked, longest first, with each category&rsquo;s share of the year&rsquo;s ' +
+      'total. The bars are directly comparable because they all start from the same edge.</div>' +
+    vizRows(cats.map(function(c){
+      return { name: c.name, value: c.year, unit: 'offences',
+               sub: c.term + ' this term &middot; ' + c.students + ' student' +
+                    (c.students===1?'':'s') + ' &middot; ' + c.open + ' not yet fixed' };
+    }), { showPct: true, unit: 'offences' });
+
+  h += '<div class="grouplabel">The same figures, as a table</div>' +
+    '<div class="lede">What is actually being picked up. The students column is how many ' +
     'different students, not how many offences &mdash; one student pulled up eight times for ' +
     'the same thing is a different problem from eight students pulled up once.</div>' +
     '<table class="etbl"><thead><tr><th>Category</th><th class="c">This term</th>' +
@@ -2198,6 +2418,18 @@ function sentHtml(){
   '</div></div>';
 }
 
+/* A read still in flight, on a screen somebody has already opened. It reuses
+   the existing loading vocabulary rather than inventing a third one. */
+function readingHtml(what){
+  return '<div class="screen centre"><div class="wrap">' +
+    '<div class="loading"><div class="spin"></div>' +
+      '<div><b>Reading ' + esc(what) + '&hellip;</b>' +
+      '<span>This one is read live rather than from the snapshot, so it takes a moment.</span>' +
+    '</div></div>' +
+    '<div class="stack"><button class="plain" data-go="menu">Back to all areas</button></div>' +
+  '</div></div>';
+}
+
 function soonHtml(){
   return '<div class="screen centre"><div class="wrap">' +
     '<h1 class="big">Not built yet.</h1>' +
@@ -2249,6 +2481,19 @@ function wire(){
 
   if ($('go')) $('go').addEventListener('click', signIn);
   if ($('pw')) $('pw').addEventListener('keydown', function(e){ if (e.key==='Enter') signIn(); });
+  /* THE STATE LIVES ON THE ELEMENTS, NOT IN S. A reveal that survived a
+     re-render would mean a password left visible on a staffroom screen after
+     a failed attempt redrew the page — so it deliberately resets to hidden
+     every time this screen is drawn. */
+  if ($('peek')) $('peek').addEventListener('click', function(){
+    var f = $('pw'); if (!f) return;
+    var showing = f.type === 'text';
+    f.type = showing ? 'password' : 'text';
+    this.classList.toggle('showing', !showing);
+    this.setAttribute('aria-label', showing ? 'Show the password' : 'Hide the password');
+    this.setAttribute('title', showing ? 'Show the password' : 'Hide the password');
+    f.focus();
+  });
   if ($('nm')) { if (S.name) { if ($('pw')) $('pw').focus(); } else $('nm').focus(); }
   if ($('out')) $('out').addEventListener('click', signOut);
 
@@ -2266,10 +2511,12 @@ function wire(){
   });
   if ($('doask')) $('doask').addEventListener('click', doAsk);
   if ($('eretry')) $('eretry').addEventListener('click', function(){
-    loadEarly().then(function(){ render(true); });
+    S.pending.early = true; render();
+    loadEarly().then(function(){ S.pending.early = false; render(true); });
   });
   if ($('gretry')) $('gretry').addEventListener('click', function(){
-    loadGrooming().then(function(){ render(true); });
+    S.pending.groom = true; render();
+    loadGrooming().then(function(){ S.pending.groom = false; render(true); });
   });
   if ($('cancelask')) $('cancelask').addEventListener('click', function(){ S.ask=null; S.err=''; render(); });
   if ($('reason')) $('reason').focus();

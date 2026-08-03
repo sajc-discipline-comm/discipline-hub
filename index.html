@@ -27,18 +27,9 @@
   IT WRITES ONE THING IN THIS SLICE: the follow-up stamp, in a batch, after
   you confirm the email was sent. Copying the email records nothing.
 
-  NOTHING CAN FORCE A REBUILD, and that is still true. The Hub RE-READS what
-  the trigger last built — every five minutes on its own, and whenever you ask
-  — but it cannot make the server build a new one. The distinction matters:
-  Refresh fetches, it does not rebuild, and no screen may imply otherwise.
-
-  A REFRESH NEVER MOVES THE PAGE UNDER YOU. It swaps silently only on the menu
-  and on early dismissal follow-up. Anywhere a selection, a confirmation or a
-  half-typed reason is at stake, the newer figures are held back behind a chip
-  and you choose the moment.
-
-  A stamp strikes the row through immediately and says out loud that the
-  figures behind it are from the last snapshot.
+  NOTHING CAN FORCE A REBUILD, so no screen pretends the world updated. A
+  stamp strikes the row through immediately and says out loud that the figures
+  behind it are from the last snapshot.
 
   THE TOKEN AND THE TEACHER ADDRESSES ARE HELD IN MEMORY AND NOWHERE ELSE.
   No localStorage, no sessionStorage, no cookie.
@@ -81,19 +72,6 @@ h2{font-size:24px;margin-bottom:4px}
 .centre .date:after{display:none}
 .built{font-size:12.5px;color:var(--muted);font-weight:400;white-space:nowrap}
 .built.old{color:var(--warn)}
-/* The refresh control. A pill rather than a link, because it sits on a line of
-   prose and has to read as a thing you can press. */
-.rfr{font-size:12px;font-weight:500;color:var(--accent);cursor:pointer;text-decoration:none;
-  border:1px solid var(--line);border-radius:999px;padding:3px 11px;white-space:nowrap;
-  background:var(--raised);
-  transition:background .2s var(--curve),border-color .2s var(--curve),color .2s var(--curve)}
-.rfr:hover{background:var(--accent-tint);border-color:var(--accent);color:var(--accent-deep)}
-/* Amber, and only ever shown when there is genuinely something waiting. A chip
-   that cries wolf is a chip nobody presses. */
-.rfr.new{background:var(--warn-tint);border-color:#e6cfa4;color:var(--warn);font-weight:600}
-.rfr.new:hover{background:#f2e4c8;border-color:var(--warn);color:var(--warn)}
-.rfr.busy{color:var(--muted);cursor:default;background:none}
-.rfr.busy:hover{background:none;border-color:var(--line);color:var(--muted)}
 .who{font-size:15.5px;color:var(--muted);margin-bottom:16px}
 .sub{font-size:21px;color:var(--muted);font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1}
 .lede{font-size:15.5px;color:var(--muted);max-width:52ch;margin-top:12px}
@@ -413,25 +391,8 @@ var TOOLS = [
     u:'https://sajc-discipline-comm.github.io/latecoming-live/' }
 ];
 
-/* How old a snapshot has to be before the stamp turns amber.
-
-   WAS 150, WHICH WAS RIGHT WHEN THE TRIGGER RAN HOURLY AND THIS PAGE NEVER
-   ASKED AGAIN. At a ten-minute rebuild and a five-minute poll, anything past
-   twenty-five minutes means two rebuilds and three polls have gone missing —
-   which is worth an amber stamp, not a shrug. */
-var STALE_MIN = 25;
-
-/* How often the page asks whether the trigger has built anything newer.
-
-   FIVE, AGAINST THE SERVER'S TEN, so a new build is on screen within about
-   five minutes of landing rather than fifteen. Halving it again would double
-   the calls to buy nothing: you cannot be fresher than the thing you are
-   reading. */
-var POLL_MS = 5 * 60 * 1000;
-
-/* Month abbreviations as C writes them, for deciding whether a snapshot is
-   even from today. */
-var MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+/* How old a snapshot has to be before the stamp turns amber. */
+var STALE_MIN = 150;
 
 /* Kim's wording, 2 August. The last sentence is the one that matters: losing
    the privilege means the Thursday 08:40 start no longer applies to them, so
@@ -447,12 +408,20 @@ var S = {
   view:'signin', user:'', name:'', busy:false, err:'',
   snap:null,            // hubSnapshot's reply, whole
   det:null,             // hubDetention's reply, or null
-  /* hubDocuments' reply, or null. NULL MEANS "COULD NOT READ", NEVER "NONE" —
-     the menu must be able to say which, because an unreadable follow-up list
-     and an empty one look identical and mean opposite things. */
-  docs:null,
-  dask:null,            // entryId whose reversal is being confirmed
-  dto:'', dErr:'',      // where it is going, and why the last attempt failed
+  /* hubEarly's reply, or null. NULL MEANS "COULD NOT READ", NEVER "NONE" —
+     the menu must be able to say which, because an unreadable record and an
+     empty one look identical and mean opposite things. */
+  early:null,
+  etab:'term',          // early dismissal: this term, or the whole year
+
+  /* hubGrooming's reply. Same rule, plus a THIRD state the others do not have:
+     ok:true with connected:false means nobody has pasted the Grooming Tracker's
+     spreadsheet ID into ⚙️ Config yet. An unconfigured screen and a school with
+     no grooming offences are the same picture and opposite facts, and only one
+     of them is good news. */
+  groom:null,
+  gtab:'students',      // which cut of the grooming figures is showing
+
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
   student:null,         // { id, name, cls, cohort, domain, row } — who is open
@@ -465,16 +434,7 @@ var S = {
   sel:{},               // entryId -> true
   stamped:{},           // entryId -> {by, when} — optimistic, until the next rebuild
   result:null,
-  first:true,
-
-  /* WHEN THE SNAPSHOT ON SCREEN WAS FETCHED, in browser milliseconds. The
-     server sends the age at the moment of the fetch; this is what supplies
-     everything since, so the number on screen keeps moving. */
-  snapAt:0,
-  /* A newer snapshot the poll is holding because you were mid-task. NULL means
-     "nothing waiting", never "nothing newer exists". */
-  pending:null,
-  polling:false, refreshing:false, refreshErr:''
+  first:true
 };
 
 var $ = function(id){ return document.getElementById(id); };
@@ -676,67 +636,16 @@ function mins(hhmm){
 
 /* How old the snapshot is, in words. Every slow screen carries this because
    nothing on the client can force a rebuild. */
-/* How old the snapshot is, in words. Every slow screen carries this because
-   nothing on the client can force a rebuild.
-
-   THE OLD ARITHMETIC WAS FROZEN. It subtracted rebuiltAt from serverTime, and
-   BOTH were captured in the same reply at sign-in — so a tab left open all
-   morning went on insisting the figures were eight minutes old, for hours,
-   while quietly being four. The stamp that existed to expose staleness was
-   the thing hiding it.
-
-   Two clocks now. The server pair gives the age at the moment of the fetch;
-   the browser supplies the drift since, from S.snapAt. */
 function builtHtml(){
   if (!S.snap) return '';
   var at = String(S.snap.rebuiltAt||'').trim();
   if (!at) return '<span class="built old">Never rebuilt &mdash; run 📸 Rebuild the Snapshot now</span>';
-
   var m = /(\d{1,2}:\d{2})\s*$/.exec(at);
   var shown = m ? m[1] : at;
-
-  /* IS IT EVEN FROM TODAY? rebuiltAt carries its own date. A snapshot stamped
-     yesterday means the trigger has not run this morning — which the old
-     subtraction turned into a NEGATIVE number and then hid, because a negative
-     is not greater than the threshold. The worst staleness there is was the
-     one case that never went amber. */
-  var dm = /^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/.exec(at);
-  if (dm){
-    var n = new Date();
-    var sameDay = Number(dm[1]) === n.getDate() &&
-                  dm[2].toLowerCase() === MON3[n.getMonth()].toLowerCase() &&
-                  Number(dm[3]) === n.getFullYear();
-    if (!sameDay){
-      return '<span class="built old">Built ' + esc(dm[1] + ' ' + dm[2]) + ', ' +
-             esc(shown) + ' &mdash; not today</span>';
-    }
-  }
-
-  var base = (m && mins(S.snap.serverTime) !== null)
-               ? mins(S.snap.serverTime) - mins(m[1]) : null;
-  if (base === null) return '<span class="built">Built ' + esc(shown) + '</span>';
-
-  var drift = Math.floor((Date.now() - (S.snapAt || Date.now())) / 60000);
-  var age = Math.max(0, base + drift);      // clock skew must not read as the future
-  return '<span class="built' + (age > STALE_MIN ? ' old' : '') + '">Built ' +
-         esc(shown) + ' &mdash; ' + ageWords(age) + '</span>';
-}
-
-function ageWords(n){
-  if (n < 1) return 'just now';
-  if (n < 60) return n + ' min ago';
-  var h = Math.floor(n / 60), r = n % 60;
-  return h + 'h' + (r ? ' ' + r + 'm' : '') + ' ago';
-}
-
-/* The refresh control, in whichever of its four states it is in. One function
-   so the four cannot drift apart across the three screens that show it. */
-function refreshHtml(){
-  if (S.refreshing) return '<span class="rfr busy">Refreshing&hellip;</span>';
-  if (S.pending)    return '<a class="rfr new" id="fresh">Newer figures &mdash; refresh</a>';
-  if (S.refreshErr) return '<a class="rfr new" id="rfr" title="' + esc(S.refreshErr) +
-                           '">Refresh failed &mdash; try again</a>';
-  return '<a class="rfr" id="rfr">Refresh</a>';
+  var age = (m && mins(S.snap.serverTime)!==null) ? mins(S.snap.serverTime) - mins(m[1]) : null;
+  var old = (age !== null && age > STALE_MIN);
+  return '<span class="built' + (old?' old':'') + '">Built ' + esc(shown) +
+         (old ? ' &mdash; ' + Math.round(age/60) + 'h ago' : '') + '</span>';
 }
 
 /* ── sign in ──────────────────────────────────────────────────────────── */
@@ -755,7 +664,7 @@ function signIn(){
     if (!res || !res.ok){ S.busy=false; S.err=(res&&res.error)||'Could not sign in.'; render(); return; }
     TOKEN = res.token; S.user = nm;
     return loadAll().then(function(){
-      S.busy = false; S.view = 'menu'; startPolling(); render(true);
+      S.busy = false; S.view = 'menu'; render(true);
     });
   }).catch(function(){
     S.busy = false;
@@ -775,176 +684,46 @@ function signIn(){
 function loadAll(){
   return api('hubSnapshot', { token: TOKEN }).then(function(res){
     if (!res || !res.ok) throw new Error((res&&res.error) || 'The snapshot could not be read.');
-    applySnap(res);
-    return loadDetention().then(loadDocs);
+    S.snap = res;
+    return api('hubDetention', { token: TOKEN }).then(function(d){
+      S.det = (d && d.ok) ? d : null;      // null = "we do not know what is booked"
+    }).catch(function(){ S.det = null; })
+    .then(loadEarly).then(loadGrooming);
   });
 }
 
-function loadDetention(){
-  return api('hubDetention', { token: TOKEN }).then(function(d){
-    S.det = (d && d.ok) ? d : null;        // null = "we do not know what is booked"
-  }).catch(function(){ S.det = null; });
+/* THESE TWO ARE LIVE, AND THAT IS THE WHOLE DIFFERENCE. Every other count on
+   the menu comes from 📸 Snapshot, which the trigger rebuilds every ten minutes
+   and which stamps its own age. hubEarly reads 📋 Log directly and hubGrooming
+   reads the Grooming Tracker's own Log directly, so neither answer has an age
+   to print — each is simply now. Do not give either area a builtHtml() stamp:
+   it would be claiming a staleness the data does not have.
+
+   NEITHER IS ALLOWED TO BREAK THE MENU. Both resolve rather than reject, and
+   both leave null behind on failure, because the snapshot is the only read this
+   Hub genuinely cannot open without. A grooming spreadsheet that will not open
+   should cost you the grooming screen and nothing else. */
+function loadEarly(){
+  return api('hubEarly', { token: TOKEN }).then(function(r){
+    S.early = (r && r.ok) ? r : null;
+  }).catch(function(){ S.early = null; });
 }
 
-/* THIS ONE IS LIVE, AND THAT IS THE WHOLE DIFFERENCE. Every other count on the
-   menu comes from 📸 Snapshot, which rebuilds every ten minutes and stamps its
-   own age. hubDocuments reads 📋 Log and 📄 Documents directly, every time, so
-   this answer has no age to print — it is simply now. Do not give this area a
-   builtHtml() stamp: it would be claiming a staleness the data does not have. */
-function loadDocs(){
-  return api('hubDocuments', { token: TOKEN }).then(function(r){
-    S.docs = (r && r.ok) ? r : null;
-  }).catch(function(){ S.docs = null; });
+function loadGrooming(){
+  return api('hubGrooming', { token: TOKEN }).then(function(r){
+    /* ok:true with connected:false is KEPT, not discarded. It carries the
+       sentence explaining that the tracker has not been connected, and that
+       sentence is the entire value of the reply. */
+    S.groom = (r && (r.ok || r.connected !== undefined)) ? r : null;
+  }).catch(function(){ S.groom = null; });
 }
 
 
-/* ── staying current ──────────────────────────────────────────────────── */
-/* THE PAGE USED TO ASK ONCE, AT SIGN-IN, AND NEVER AGAIN. The trigger's hour
-   was only half the staleness; the other half was a tab open since breakfast
-   showing figures fetched at breakfast. Two people working the same worklist
-   off two such tabs is how one student's form teacher is emailed twice about
-   the same offence — and hubStamp's alreadyDone protects the RECORD from
-   that, not the form teacher's inbox.
-
-   IT IS A POLL, NOT A PUSH. Apps Script cannot tap a page on the shoulder, so
-   a timer is the only mechanism there is — the same one the gate screen has
-   used all along. */
-var pollTimer = null;
-
-function startPolling(){
-  stopPolling();
-  pollTimer = setInterval(poll, POLL_MS);
-}
-function stopPolling(){
-  if (pollTimer){ clearInterval(pollTimer); pollTimer = null; }
-}
-
-/* WHEN IT IS SAFE TO CHANGE THE PAGE UNDER SOMEBODY.
-
-   Exactly two screens qualify, and the rule is blunt rather than clever on
-   purpose. The menu is the idle state and has nothing to lose. Early dismissal
-   follow-up reads live anyway and holds no selection.
-
-   EVERYWHERE ELSE HOLDS BACK. A worklist arrives with every row already
-   ticked, so swapping the snapshot underneath it would silently change who is
-   in the email somebody is three seconds from sending. */
-function safeToSwap(){
-  if (S.busy || S.ask || S.dask) return false;
-  return S.view === 'menu' || S.view === 'docs';
-}
-
-function applySnap(res){
-  S.snap = res;
-  S.snapAt = Date.now();
-  S.pending = null;
-  S.refreshErr = '';
-}
-
-function poll(){
-  if (!TOKEN || S.polling || S.refreshing) return;
-  S.polling = true;
-  api('hubSnapshot', { token: TOKEN }).then(function(res){
-    S.polling = false;
-    if (!res || !res.ok) return;            // a failed poll is not news. Say nothing.
-
-    var isNew = !S.snap || String(res.rebuiltAt||'') !== String(S.snap.rebuiltAt||'');
-    if (!isNew){
-      /* SAME BUILD, BUT NOT THE SAME MOMENT — and this is the whole reason a
-         poll that finds nothing new is still worth making. Re-anchoring both
-         clocks is what stops "12 min ago" being a number frozen at sign-in. */
-      if (S.snap){ S.snap.serverTime = res.serverTime; S.snapAt = Date.now(); }
-      render();
-      return;
-    }
-    if (!safeToSwap()){ S.pending = res; render(); return; }
-    var prev = seenIds();
-    applySnap(res);
-    reselectNew(prev);
-    loadDetention().then(loadDocs).then(function(){ render(); });
-  }).catch(function(){ S.polling = false; });
-}
-
-/* The chip. Takes what the poll is holding rather than asking again — it is
-   already the newest thing the server has built. */
-function takePending(){
-  if (!S.pending) return refreshNow();
-  var prev = seenIds();
-  applySnap(S.pending);
-  reselectNew(prev);
-  loadDetention().then(loadDocs).then(function(){ render(); });
-}
-
-function refreshNow(){
-  if (!TOKEN || S.refreshing) return;
-  S.refreshing = true; S.pending = null; S.refreshErr = ''; render();
-  var prev = seenIds();
-  api('hubSnapshot', { token: TOKEN }).then(function(res){
-    if (!res || !res.ok) throw new Error((res && res.error) || 'The snapshot could not be read.');
-    applySnap(res);
-    reselectNew(prev);
-    return loadDetention().then(loadDocs);
-  }).then(function(){
-    S.refreshing = false; render();
-  }).catch(function(){
-    /* A FAILED REFRESH LEAVES THE OLD FIGURES ON SCREEN, and that is correct.
-       They were true ten minutes ago; a blank page is true of nothing. The
-       stamp beside them goes on ageing and will turn amber on its own. */
-    S.refreshing = false;
-    S.refreshErr = 'Could not reach the server just now. Nothing was changed — the ' +
-                   'figures on screen are the ones that were already here, and the age ' +
-                   'beside the date is still honest about how old they are.';
-    render();
-  });
-}
-
-/* Every Entry ID the snapshot on screen knows about, captured before it is
-   replaced. */
-function seenIds(){
-  var m = {};
-  allRows().forEach(function(x){ m[x.entryId] = 1; });
-  return m;
-}
-
-/* A WORKLIST ARRIVES WITH EVERY ROW TICKED, so a student who appears in a
-   refresh has to arrive ticked too. Otherwise the refresh QUIETLY EXCLUDES the
-   very person it has just told you about — the newest tier 7 in the school,
-   left out of today's email by the act of looking for them.
-
-   Rows already on screen keep whatever you did to them. */
-function reselectNew(prev){
-  if (S.view !== 'lc' || !S.area) return;
-  worklist(S.area).forEach(function(x){
-    if (!prev[x.entryId] && !isStamped(x)) S.sel[x.entryId] = true;
-  });
-}
-
-/* The six strings the server may return, byte for byte. TWO OF THEM CONTAIN AN
-   EM DASH and a hyphen in its place fails silently — the row would simply fall
-   through every branch and be filed under "acknowledged" without a word. They
-   are constants here so there is exactly one place to get them wrong, and a
-   test compares them against the handover's list character by character. */
-var DOC_AWAIT   = 'Awaiting';
-var DOC_MC      = 'MC acknowledged';
-var DOC_LETTER  = "Parent's letter acknowledged";   // STRAIGHT apostrophe, as delivered
-var DOC_QUERIED = 'Queried — not owed';
-var DOC_CLOSED  = 'Closed by committee';
-var DOC_RECEIPT = 'Receipt only — nothing owed';
-var DOC_OUTCOMES = [DOC_AWAIT, DOC_MC, DOC_LETTER, DOC_QUERIED, DOC_CLOSED, DOC_RECEIPT];
-window.__hubOutcomes = DOC_OUTCOMES;   // so a test can compare them character by character
-
-function docRows(){ return (S.docs && S.docs.rows) || []; }
-function docsHanded(){ return docRows().filter(function(x){ return x.outcome===DOC_AWAIT && x.handedOn; }); }
-function docsOpen(){   return docRows().filter(function(x){ return x.outcome===DOC_AWAIT && !x.handedOn; }); }
-function docsSettled(){ return docRows().filter(function(x){
-  return x.outcome!==DOC_AWAIT && x.outcome!==DOC_RECEIPT; }); }
-function docsReceipts(){ return docRows().filter(function(x){ return x.outcome===DOC_RECEIPT; }); }
 
 function signOut(){
-  stopPolling();
   TOKEN=null; S.teachers=null;
-  S.pending=null; S.polling=false; S.refreshing=false; S.refreshErr=''; S.snapAt=0;
-  S.view='signin'; S.snap=null; S.det=null; S.docs=null; S.sel={}; S.stamped={}; S.user='';
-  S.dask=null; S.dto=''; S.dErr='';
+  S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
+  S.early=null; S.groom=null; S.etab='term'; S.gtab='students';
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   render(true);
@@ -978,7 +757,8 @@ function render(moved){
   else if (S.view==='email')  html = emailHtml();
   else if (S.view==='sent')   html = sentHtml();
   else if (S.view==='student') html = studentHtml();
-  else if (S.view==='docs')   html = docsHtml();
+  else if (S.view==='early')  html = earlyHtml();
+  else if (S.view==='groom')  html = groomHtml();
   else if (S.view==='soon')   html = soonHtml();
   v.innerHTML = html;
   if (moved){ v.scrollTop = 0; } else { v.scrollTop = keep; }
@@ -1029,25 +809,42 @@ function menuHtml(){
     '</div>';
   }).join('');
 
-  /* Early dismissal follow-up. NOT a snapshot area — see loadDocs. The two
-     numbers are deliberately not summed: "with the committee" is the half the
-     machine has given up on, and a single total would let three abandoned
-     students hide inside a quiet-looking twelve. */
-  if (!S.docs){
-    rows += '<div class="mrow" data-area="__docs"><div class="mt">Early dismissal follow-up' +
-      '<em>the follow-up records could not be read &mdash; open it for the reason</em></div></div>';
+  /* EARLY DISMISSALS. NOT a snapshot area — see loadEarly. The two numbers are
+     deliberately not summed: the first is students who have crossed a line and
+     the second is everybody who has left early at all, and a single total would
+     let four students worth a conversation hide inside a quiet-looking thirty. */
+  if (!S.early){
+    rows += '<div class="mrow" data-area="__early"><div class="mt">Early dismissals' +
+      '<em>the green slip record could not be read &mdash; open it for the reason</em></div></div>';
   } else {
-    var dOpen = docsOpen().length, dHanded = docsHanded().length;
-    var redirect = S.docs.onlyTo
-      ? '<em>&#9888; every message is being redirected to ' + esc(S.docs.onlyTo) +
-        ' &mdash; no form teacher is receiving anything</em>'
-      : (S.docs.sendingOn ? '' : '<em>automatic sending is off &mdash; nothing below will move</em>');
-    rows += '<div class="mrow' + (dHanded ? ' t5' : (dOpen ? ' t3' : '')) + '" data-area="__docs">' +
-      '<div class="mt">Early dismissal follow-up' + redirect + '</div>' +
-      big(dOpen, 'waiting on a form teacher') +
-      big(dHanded, 'with the committee') +
+    var eFlag = earlyFlagged().length, eAll = (S.early.students || []).length;
+    rows += '<div class="mrow' + (eFlag ? ' t3' : '') + '" data-area="__early">' +
+      '<div class="mt">Early dismissals' +
+        '<em>who is leaving early, how often, and why</em></div>' +
+      big(eFlag, 'over the threshold') +
+      big(eAll, 'students this year') +
     '</div>';
   }
+
+  /* GROOMING AND ATTIRE. A read across into the other spreadsheet, so it has
+     three states rather than two and the third is the interesting one: the
+     tracker exists and works, but nobody has told this Hub where it is. */
+  if (!S.groom){
+    rows += '<div class="mrow" data-area="__groom"><div class="mt">Grooming and attire' +
+      '<em>the grooming tracker could not be read &mdash; open it for the reason</em></div></div>';
+  } else if (!S.groom.connected){
+    rows += '<div class="mrow" data-area="__groom"><div class="mt">Grooming and attire' +
+      '<em>not connected yet &mdash; open it to see what to paste where</em></div></div>';
+  } else {
+    var gFlag = (S.groom.students || []).filter(function(x){ return x.overTerm; }).length;
+    rows += '<div class="mrow' + (gFlag ? ' t3' : '') + '" data-area="__groom">' +
+      '<div class="mt">Grooming and attire' +
+        '<em>repeat offenders, by class and by category</em></div>' +
+      big(gFlag, 'over the threshold') +
+      big(S.groom.openTotal || 0, 'not yet fixed') +
+    '</div>';
+  }
+
 
   var det = S.det && S.det.rows ? S.det.rows.length : 0;
   rows += '<div class="mrow soon" data-area="__det"><div class="mt">Detention Sessions' +
@@ -1067,13 +864,12 @@ function menuHtml(){
     }).join('') + '</div>';
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
-    '<div class="date">' + esc(todayLong()) + ' ' + builtHtml() + ' ' + refreshHtml() + '</div>' +
+    '<div class="date">' + esc(todayLong()) + ' ' + builtHtml() + '</div>' +
     '<h1>SAJC Discipline Committee Hub</h1>' +
     '<div class="who">Signed in as ' + esc(S.user) + '.</div>' +
     '<div class="mrows">' + rows + '</div>' + tools +
-    '<div class="foot"><span>Counts come from the snapshot, which the server rebuilds every ' +
-    'ten minutes on a school day; this page re-reads it every five, so the age beside the ' +
-    'date is what it says it is. Early dismissal follow-up is read live and has no age. ' +
+    '<div class="foot"><span>Counts come from the snapshot, which rebuilds hourly &mdash; ' +
+    'except early dismissal follow-up, which is read live every time this page loads. ' +
     'Nothing is locked &mdash; every area opens for anyone.</span>' +
     '<span class="sp"></span><button class="plain" id="out">Sign out</button></div>' +
   '</div></div>';
@@ -1115,7 +911,7 @@ function lcHtml(){
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="appbar"><a data-go="menu">&larr; All areas</a><span>&middot;</span>' +
       '<span>Signed in as ' + esc(S.user) + '</span></div>' +
-    '<div class="date">' + esc(a.title) + ' ' + builtHtml() + ' ' + refreshHtml() + '</div>' +
+    '<div class="date">' + esc(a.title) + ' ' + builtHtml() + '</div>' +
     '<div class="tabs"><a class="' + (S.tab==='follow'?'on':'') + '" data-tab="follow">Follow-up</a>' +
       '<a class="' + (S.tab==='det'?'on':'') + '" data-tab="det">Detention</a></div>' +
     body +
@@ -1532,7 +1328,7 @@ function studentHtml(){
 
     (over ? '<div class="note warn"><b>' + over + ' offence' + (over===1?'':'s') +
       ' excused just now.</b> The figures above still come from the last snapshot and ' +
-      'will drop at the next rebuild, within ten minutes.</div>' : '') +
+      'will drop at the next hourly rebuild.</div>' : '') +
 
     (S.ask ? askHtml() :
       '<div class="stack rowwise">' +
@@ -1555,195 +1351,328 @@ function studentHtml(){
   '</div></div>';
 }
 
-/* ── early dismissal follow-up ────────────────────────────────────────── */
-/* Folded in from the standalone documents.html on 2 August, so that there is
-   one front door rather than two. The rule this screen exists to protect:
 
-   EVERY ACKNOWLEDGEMENT WAS MADE BY SOMEBODY HOLDING A LINK THAT WAS EMAILED
-   TO A NAMED TEACHER — not by that teacher. A forwarded message, a shared
-   staffroom laptop, a colleague covering the class: all indistinguishable.
-   So nothing here says "confirmed", "verified" or "certified". It says "from
-   the link sent to". If any line is ever found claiming more than that, it is
-   a defect, and a more serious one than it looks. */
+/* ── early dismissals ─────────────────────────────────────────────────── */
+/* REPLACED the early dismissal follow-up area on 3 August 2026. The follow-up
+   — the automatic email chasing a form teacher for an MC — was shelved by the
+   DM before it was ever switched on, and the whole subsystem is archived in
+   Notion rather than deleted. What the committee actually asked for is what is
+   here: a count. Who is leaving early, how often, and why.
 
-function docsHtml(){
-  if (!S.docs){
+   THIS SCREEN WRITES NOTHING AT ALL. It is the first area of the Hub with no
+   write path whatsoever — no stamp, no overturn, no hold. That is not an
+   omission. There is no ladder for early dismissal and there is deliberately
+   not going to be one; the committee reads the number and decides what to do
+   with a person, which is a conversation and not a button.
+
+   THE THRESHOLD IS A DISPLAY RULE, NOT A CONSEQUENCE. Crossing it puts a
+   student at the top of this list. It does not issue anything, and nothing on
+   this screen should ever be worded as though it does. */
+
+function earlyStudents(){ return (S.early && S.early.students) || []; }
+
+/* Over the line on the tab currently showing. THE COMPARISON IS THE SERVER'S
+   NUMBERS AGAINST THE SERVER'S THRESHOLD — the page supplies neither, so this
+   screen and the General Office phone cannot come to different conclusions
+   about the same student. A threshold of 0 or blank disables that tier rather
+   than flagging the whole school, which is what a naive >= would do. */
+function earlyFlagged(){
+  if (!S.early) return [];
+  var at = S.early.concernAt || {};
+  var byTerm = Number(at.term) || 0, byYear = Number(at.year) || 0;
+  return earlyStudents().filter(function(x){
+    return (byTerm > 0 && x.term >= byTerm) || (byYear > 0 && x.year >= byYear);
+  });
+}
+
+/* "3 that count, and 5 in all — 2 for official school events." NAMED, never
+   lumped. This is the 30 July decision, point 1c, and the reason is a privacy
+   one as much as a clarity one: with medical appointments no longer counting, a
+   bucket labelled "school events" would quietly contain a student's hospital
+   visits, on a screen several people read. */
+function earlyWhy(x, span){
+  var meta = (S.early && S.early.reasonMeta) || [];
+  var parts = [];
+  meta.forEach(function(m){
+    var r = x.reasons && x.reasons[m.code];
+    var n = r ? (span === 'term' ? r.term : r.year) : 0;
+    if (n) parts.push(n + ' ' + m.label.toLowerCase() + (m.counts ? '' : ' (does not count)'));
+  });
+  return parts.length ? parts.join(' &middot; ') : 'no breakdown recorded';
+}
+
+function earlyRowHtml(x, span, at){
+  var n     = span === 'term' ? x.term    : x.year;
+  var all   = span === 'term' ? x.termAll : x.yearAll;
+  var over  = at > 0 && n >= at;
+  var meta  = [x.cls || 'class unknown'];
+  if (x.termNo) meta.push(span === 'term' ? 'term ' + x.termNo : 'academic year ' + (S.early.academicYear||''));
+  if (x.lastDate) meta.push('last left early ' + x.lastDate);
+
+  return '<div class="row flat' + (over ? ' t3' : '') + '">' +
+      '<div class="body">' +
+        '<div class="p">' + esc(x.name) + '</div>' +
+        '<div class="meta">' + meta.map(esc).join(' &middot; ') + '</div>' +
+        '<div class="s">' + earlyWhy(x, span) + '</div>' +
+      '</div>' +
+      '<div class="stats">' +
+        '<div class="stat"><span class="v">' + n + '</span><span class="k">that count</span></div>' +
+        '<div class="stat"><span class="v">' + all + '</span><span class="k">in all</span></div>' +
+      '</div>' +
+      '<div class="dside">' +
+        (over ? '<span class="tag t3">Over ' + at + '</span>' : '<span class="tag quiet">&nbsp;</span>') +
+        /* NO BUTTON WITHOUT A STUDENT ID. A student recorded before they were in
+           the Master Database has no ID, and openStudent('') would fetch an empty
+           history and print it as though the student had a clean record. */
+        (x.studentId
+          ? '<button class="ghost sm" data-open="' + esc(x.studentId) + '">Their record</button>'
+          : '<span class="tag quiet">no student ID</span>') +
+      '</div>' +
+    '</div>';
+}
+
+function earlyHtml(){
+  if (!S.early){
     return '<div class="screen centre"><div class="wrap">' +
-      '<h1 class="big">The follow-up records could not be read.</h1>' +
-      '<div class="lede">This area reads &#128203; Log and &#128196; Documents live, so there is ' +
-        'no older answer to fall back on &mdash; unlike every other area, which can still show ' +
-        'you the last snapshot. Nothing has been changed by this.</div>' +
-      '<div class="stack"><button id="dretry">Try again</button>' +
+      '<h1 class="big">The green slip record could not be read.</h1>' +
+      '<div class="lede">This area reads &#128203; Log live, so there is no older answer to ' +
+        'fall back on &mdash; unlike every other area, which can still show you the last ' +
+        'snapshot. Nothing has been changed by this.</div>' +
+      '<div class="stack"><button id="eretry">Try again</button>' +
       '<button class="plain" data-go="menu">Back to all areas</button></div>' +
     '</div></div>';
   }
 
-  var d = S.docs;
-  var handed = docsHanded(), open = docsOpen(), settled = docsSettled(), receipts = docsReceipts();
+  var d    = S.early;
+  var span = S.etab === 'year' ? 'year' : 'term';
+  var at   = Number((d.concernAt || {})[span]) || 0;
+  var list = earlyStudents().slice().sort(function(a, b){
+    return (span === 'term' ? (b.term - a.term) || (b.termAll - a.termAll)
+                            : (b.year - a.year) || (b.yearAll - a.yearAll)) ||
+           String(a.cls).localeCompare(String(b.cls)) ||
+           String(a.name).localeCompare(String(b.name));
+  });
+  var over  = list.filter(function(x){ return at > 0 && (span==='term'?x.term:x.year) >= at; });
+  var under = list.filter(function(x){ return !(at > 0 && (span==='term'?x.term:x.year) >= at); });
 
   /* No builtHtml() here, deliberately. This answer is live and has no age. */
   var h = '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="date">' + esc(todayLong()) +
-      ' <span class="built">as at ' + esc(d.serverTime || '') + '</span> ' +
-      refreshHtml() + '</div>' +
-    '<h1>Early dismissal follow-up</h1>' +
-    '<div class="who">What the automatic emails have and have not achieved. This is the only ' +
-      'place an acknowledgement can be undone.</div>';
+      ' <span class="built">as at ' + esc(d.serverTime || '') + '</span></div>' +
+    '<h1>Early dismissals</h1>' +
+    '<div class="who">Who has left school early, how often, and why. This screen records ' +
+      'nothing and decides nothing &mdash; there is no ladder for early dismissal. It is here ' +
+      'so a pattern is visible before somebody has to go looking for it.</div>';
 
-  /* onlyTo first and loudest. A redirect left on after a test looks EXACTLY
-     like a system that is working — every row fills in, every state moves,
-     and not one form teacher has been written to. */
-  if (d.onlyTo){
-    h += '<div class="note err"><b>Every message is being redirected to ' + esc(d.onlyTo) +
-      '.</b> No form teacher is receiving anything, whatever the switch below says. Clear ' +
-      '<i>Early dismissal email &mdash; send only to</i> in &#9881;&#65039; Config when you have ' +
-      'finished testing.</div>';
-  }
-  h += d.sendingOn
-    ? '<div class="note ok"><b>Automatic sending is on.</b> Notices and reminders go out each ' +
-      'afternoon. Set <i>Early dismissal email &mdash; send</i> in &#9881;&#65039; Config to ' +
-      'anything other than <i>On</i> to stop them &mdash; it takes effect at the next run, with ' +
-      'no redeploy.</div>'
-    : '<div class="note warn"><b>Automatic sending is off.</b> Slips are still being logged, but ' +
-      'no form teacher is being told and nothing below will move.</div>';
+  /* THE TWO TABS ARE TWO DIFFERENT QUESTIONS, not two zoom levels. A term
+     catches the cluster — three in a few weeks is a student having a bad term.
+     A year catches the accumulator — twice a term, every term, which no single
+     term ever notices. Neither one finds the other's student. */
+  h += '<div class="tabs">' +
+    '<a class="' + (span==='term'?'on':'') + '" data-etab="term">This term</a>' +
+    '<a class="' + (span==='year'?'on':'') + '" data-etab="year">This year</a>' +
+  '</div>';
 
-  h += '<div class="grouplabel">With the committee &mdash; the machine has stopped</div>' +
-    (handed.length ? docRowsHtml(handed)
-      : '<div class="blank">Nothing has been given up on. Every open case is still inside its ' +
-        'two reminders.</div>');
+  h += at > 0
+    ? '<div class="note ok"><b>The threshold is ' + at + ' ' + (span==='term'?'in a term':'in a year') +
+      '.</b> It counts only the reasons marked <i>Counts</i> in &#127991;&#65039; Reasons &mdash; ' +
+      'so a student the school itself pulled out for a prize-giving never appears here for it. ' +
+      'Change the number in &#9881;&#65039; Config, against <i>Early dismissal concern at</i>. ' +
+      'Crossing it puts a student on this list and colours a line on the General Office phone. ' +
+      'It does nothing else.</div>'
+    : '<div class="note warn"><b>No threshold is set for this view.</b> Put a number in ' +
+      '&#9881;&#65039; Config against <i>Early dismissal concern at</i> and this list will ' +
+      'separate out the students worth a conversation.</div>';
 
-  h += '<div class="grouplabel">Open &mdash; waiting on a form teacher</div>' +
-    (open.length ? docRowsHtml(open)
-      : '<div class="blank">Nothing is outstanding. Every slip that owed a document has been ' +
-        'acknowledged or queried.</div>');
+  h += '<div class="grouplabel">Over the threshold</div>' +
+    (over.length ? '<div class="rows">' + over.map(function(x){ return earlyRowHtml(x, span, at); }).join('') + '</div>'
+      : '<div class="blank">Nobody has reached ' + (at || 'the threshold') + ' ' +
+        (span==='term'?'this term':'this year') + '.</div>');
 
-  h += '<div class="grouplabel">Acknowledged, queried and closed</div>' +
-    (settled.length ? docRowsHtml(settled)
-      : '<div class="blank">Nothing has been acknowledged yet.</div>');
+  h += '<div class="grouplabel">Everyone else who has left early, most first</div>' +
+    (under.length ? '<div class="rows">' + under.map(function(x){ return earlyRowHtml(x, span, at); }).join('') + '</div>'
+      : '<div class="blank">Nobody else has left early ' + (span==='term'?'this term':'this year') + '.</div>');
 
-  if (receipts.length){
-    h += '<div class="grouplabel">Receipts &mdash; nothing was owed, nothing was chased</div>' +
-      '<div class="lede">Named in a notice so the form teacher&rsquo;s record matches ours. They ' +
-      'owe nothing, and the row exists only so the same receipt is not sent again tomorrow.</div>' +
-      docRowsHtml(receipts);
-  }
+  /* TODAY, LAST AND SMALL. It is the General Office's screen that exists to
+     answer "who has gone home", and repeating it here as the headline would
+     make a committee screen look like a front-desk one. It is worth having at
+     the bottom because it is the one part of this record that changes hour by
+     hour. */
+  var today = d.today || [];
+  h += '<div class="grouplabel">Left early today</div>' +
+    (today.length
+      ? '<div class="rows">' + today.map(function(t){
+          return '<div class="row flat"><div class="body">' +
+            '<div class="p">' + esc(t.name) + '</div>' +
+            '<div class="meta">' + [t.cls, t.time, t.reasonLabel].map(esc).join(' &middot; ') + '</div>' +
+          '</div><div class="dside">' +
+            (t.counts ? '<span class="tag t2">Counts</span>' : '<span class="tag quiet">Does not count</span>') +
+          '</div></div>';
+        }).join('') + '</div>'
+      : '<div class="blank">Nobody has left early today.</div>');
 
-  h += '<div class="foot"><span>This screen writes one thing: the outcome of a slip, with who ' +
-    'changed it and why. It never edits what the General Office recorded, never changes whether ' +
-    'a slip counts, and never sends mail.</span><span class="sp"></span>' +
+  h += '<div class="foot"><span>This screen writes nothing. It cannot change whether a slip ' +
+    'counts &mdash; that is the <i>Counts</i> column in &#127991;&#65039; Reasons &mdash; and it ' +
+    'cannot remove a slip. To take one out of a student&rsquo;s total, overturn it on their ' +
+    'record.</span><span class="sp"></span>' +
     '<button class="plain" data-go="menu">Back to all areas</button></div>';
 
   return h + '</div></div>';
 }
 
-function docRowsHtml(list){
-  return '<div class="rows">' + list.map(docRowHtml).join('') + '</div>';
-}
+/* ── grooming and attire ──────────────────────────────────────────────── */
+/* ADDED 3 AUGUST 2026, reversing the earlier position that the Hub did not
+   need a grooming view. Kim: "i know we mentioned previously we don't need it,
+   but i have thought otherwise since."
 
-function docRowHtml(x){
-  var meta = [x.cls, 'left early ' + x.date, x.reasonLabel];
-  meta.push(x.notifiedTo ? 'to ' + x.notifiedTo : 'not addressed');
-  if (x.notifiedOn) meta.push('told ' + x.notifiedOn);
-  if (x.chase1On)   meta.push('reminded ' + x.chase1On);
-  if (x.chase2On)   meta.push('last reminder ' + x.chase2On);
+   IT READS THE OTHER SPREADSHEET THROUGH THIS PROJECT'S API, so there is one
+   password and one front door. See apiHubGrooming_ for why.
 
-  var say;
-  if (x.outcome === DOC_AWAIT && x.handedOn){
-    say = 'Told the form teacher on <b>' + esc(x.notifiedOn) + '</b>, reminded twice, and nothing ' +
-          'came back. Handed over on <b>' + esc(x.handedOn) + '</b> &mdash; no further email will ' +
-          'be sent about it. It is a person&rsquo;s job now.';
-  } else if (x.outcome === DOC_AWAIT){
-    say = 'Waiting. ' + (x.chase2On ? 'Both reminders have gone.'
-        : x.chase1On ? 'One reminder has gone; one more to come.'
-        : 'No reminder yet.');
-  } else if (x.outcome === DOC_RECEIPT){
-    say = 'Nothing was owed. Listed in the notice so the record matches.';
-  } else {
-    /* The sentence the whole subsystem turns on. Never "confirmed". */
-    say = 'Recorded from the link sent to <b>' + esc(x.ackBy || 'somebody') + '</b>' +
-          (x.ackOn ? ', ' + esc(x.ackOn) : '') + '. That is what the record says, and all it can ' +
-          'say &mdash; a click is not the same as the named teacher.';
-  }
-  if (x.revBy) say += ' Reversed by <b>' + esc(x.revBy) + '</b> &mdash; ' + esc(x.revReason);
+   IT IS READ-ONLY, AND MORE STRICTLY THAN THE REST OF THE HUB. The grooming
+   phone app is the only thing that writes to that sheet, and its recheck loop
+   is the only thing that closes an offence. Nothing here may ever gain a
+   button that changes a grooming row; if that is wanted it belongs in the
+   grooming app, behind the grooming password.
 
-  var tag = x.outcome === DOC_AWAIT
-      ? (x.handedOn ? '<span class="tag t5">Given up on</span>'
-                    : '<span class="tag t3">Awaiting</span>')
-    : x.outcome === DOC_RECEIPT  ? '<span class="tag quiet">Nothing owed</span>'
-    : x.outcome === DOC_QUERIED  ? '<span class="tag quiet">Queried</span>'
-    : '<span class="tag ok">' + esc(x.outcome) + '</span>';
+   THREE CUTS, BECAUSE THEY ANSWER THREE DIFFERENT QUESTIONS. Repeat offenders
+   is who to talk to. By class is who to ask a form teacher about. By category
+   is what to say at assembly. */
 
-  var action = '';
-  if (x.outcome === DOC_AWAIT){
-    action = '<button class="ghost sm" data-dclose="' + esc(x.entryId) + '">Close it</button>';
-  } else if (x.outcome !== DOC_RECEIPT){
-    action = '<button class="plain" data-dback="' + esc(x.entryId) + '">Reverse this</button>';
-  }
-
-  return '<div class="row flat">' +
-      '<div class="body">' +
-        '<div class="p">' + esc(x.name) + '</div>' +
-        '<div class="meta">' + meta.map(esc).join(' &middot; ') + '</div>' +
-        '<div class="s">' + say + '</div>' +
-      '</div>' +
-      '<div class="dside">' + tag + action + '</div>' +
-    '</div>' +
-    (S.dask === x.entryId ? docAskHtml() : '');
-}
-
-function docAskHtml(){
-  var toClosed = S.dto === DOC_CLOSED;
-  return '<div class="note q">' +
-    '<b>' + (toClosed ? 'Closing this without a form teacher acknowledging it.'
-                      : 'Putting this back to awaiting.') + '</b> ' +
-    (toClosed ? 'The record will say the committee closed it, not that a document arrived.'
-              : 'It returns to the open list. If sending is on it will be reminded again.') +
-    ' Nothing already recorded is deleted &mdash; the row stays, with who decided and why.' +
-    '<div class="field"><label>Why</label>' +
-      '<textarea id="drsn" rows="2" placeholder="Required. Without one the record is ' +
-      'indistinguishable from a mistake when somebody reads it back in a year."></textarea></div>' +
-    (S.dErr ? '<div class="note err">' + esc(S.dErr) + '</div>' : '') +
-    '<div class="stack rowwise">' +
-      '<button class="sm" id="ddo"' + (S.busy?' disabled':'') + '>' +
-        (S.busy ? 'Saving&hellip;' : (toClosed ? 'Close it' : 'Put it back')) + '</button>' +
-      '<button class="plain" id="dnope">Not yet</button>' +
+function groomHtml(){
+  if (!S.groom){
+    return '<div class="screen centre"><div class="wrap">' +
+      '<h1 class="big">The grooming tracker could not be read.</h1>' +
+      '<div class="lede">This area reads the Grooming Tracker&rsquo;s own spreadsheet live, so ' +
+        'there is no older answer to fall back on. Nothing else on the Hub is affected, and ' +
+        'nothing has been changed by this.</div>' +
+      '<div class="stack"><button id="gretry">Try again</button>' +
+      '<button class="plain" data-go="menu">Back to all areas</button></div>' +
     '</div></div>';
+  }
+
+  var d = S.groom;
+
+  /* NOT CONNECTED IS NOT AN ERROR, and it must not read like one. An empty
+     screen and an unconfigured one are the same picture and opposite facts. */
+  if (!d.connected || !d.ok){
+    return '<div class="screen centre"><div class="wrap">' +
+      '<h1 class="big">' + (d.connected ? 'That did not open.' : 'Not connected yet.') + '</h1>' +
+      '<div class="lede">' + esc(d.error || '') + '</div>' +
+      '<div class="lede">Open the SAJC Grooming Tracker, copy the long code out of its address ' +
+        'bar &mdash; the part between <i>/d/</i> and <i>/edit</i> &mdash; and paste it into ' +
+        '&#9881;&#65039; Config in the Attendance Tracker, against <i>Grooming Tracker ID</i>. ' +
+        'Nothing needs redeploying.</div>' +
+      '<div class="stack"><button id="gretry">Try again</button>' +
+      '<button class="plain" data-go="menu">Back to all areas</button></div>' +
+    '</div></div>';
+  }
+
+  var tab = S.gtab || 'students';
+  var h = '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="date">' + esc(todayLong()) +
+      ' <span class="built">as at ' + esc(d.serverTime || '') + '</span></div>' +
+    '<h1>Grooming and attire</h1>' +
+    '<div class="who">Read straight from the Grooming Tracker. This screen changes nothing in ' +
+      'it &mdash; an offence is closed by the recheck on the phone, and nowhere else.</div>';
+
+  h += '<div class="tabs">' +
+    '<a class="' + (tab==='students'?'on':'') + '" data-gtab="students">Repeat offenders</a>' +
+    '<a class="' + (tab==='classes'?'on':'')  + '" data-gtab="classes">By class</a>' +
+    '<a class="' + (tab==='categories'?'on':'') + '" data-gtab="categories">By category</a>' +
+  '</div>';
+
+  if (!d.rows){
+    h += '<div class="blank">No grooming offences recorded for ' + esc(d.academicYear) + '.</div>';
+    return h + groomFootHtml() + '</div></div>';
+  }
+
+  if (tab === 'students')        h += groomStudentsHtml(d);
+  else if (tab === 'classes')    h += groomClassesHtml(d);
+  else                           h += groomCategoriesHtml(d);
+
+  return h + groomFootHtml() + '</div></div>';
 }
 
-function doDocReverse(){
-  var reason = $('drsn') ? $('drsn').value.trim() : '';
-  if (!reason){
-    S.dErr = 'A reason is required. Without one the record is indistinguishable from a mistake ' +
-             'when somebody reads it back in a year.';
-    return render();
-  }
-  S.busy = true; S.dErr = ''; render();
-  api('hubDocumentReverse', { token:TOKEN, entryId:S.dask, by:S.user, reason:reason, to:S.dto })
-    .then(function(r){
-      S.busy = false;
-      if (!r || !r.ok){
-        S.dErr = (r && r.error) || 'That could not be changed. Nothing was saved.';
-        return render();
-      }
-      S.dask = null; render();
-      loadDocs().then(function(){ render(); });
-    })
-    .catch(function(){
-      /* A LOST REPLY SAYS NOTHING ABOUT WHAT THE SERVER DID. Reload and let her
-         look, rather than claiming nothing was saved — the one claim we cannot
-         make from here. */
-      S.busy = false; S.dask = null;
-      S.dErr = '';
-      loadDocs().then(function(){
-        render();
-        var w = $('view').querySelector('.wrap');
-        if (w) w.insertAdjacentHTML('afterbegin',
-          '<div class="note warn"><b>The answer did not come back.</b> That says nothing about ' +
-          'whether it saved, so the list has been reloaded &mdash; check the row below before ' +
-          'trying again.</div>');
-      });
-    });
+function groomFootHtml(){
+  return '<div class="foot"><span>Read-only. Offences are recorded and closed on the grooming ' +
+    'phone app; this screen only counts them.</span><span class="sp"></span>' +
+    '<button class="plain" data-go="menu">Back to all areas</button></div>';
 }
+
+function groomStudentsHtml(d){
+  var at = Number(d.concernAt) || 0;
+  var over  = (d.students||[]).filter(function(x){ return x.overTerm; });
+  var under = (d.students||[]).filter(function(x){ return !x.overTerm; });
+
+  var h = at > 0
+    ? '<div class="note ok"><b>The threshold is ' + at + ' in a term.</b> Change it in ' +
+      '&#9881;&#65039; Config against <i>Grooming concern at (per term)</i>. It decides who ' +
+      'appears at the top of this list and nothing else.</div>'
+    : '';
+
+  function row(x){
+    var meta = [x.cls || 'class unknown'];
+    if (x.lastDate) meta.push('last picked up ' + x.lastDate);
+    if (x.noShow) meta.push(x.noShow + ' did-not-report');
+    var why = (x.byCat||[]).map(function(c){ return c.n + ' ' + c.name.toLowerCase(); }).join(' &middot; ');
+    return '<div class="row flat' + (x.overTerm ? ' t3' : '') + '">' +
+        '<div class="body">' +
+          '<div class="p">' + esc(x.name) + '</div>' +
+          '<div class="meta">' + meta.map(esc).join(' &middot; ') + '</div>' +
+          '<div class="s">' + (why || 'no categories recorded') + '</div>' +
+        '</div>' +
+        '<div class="stats">' +
+          '<div class="stat"><span class="v">' + x.term + '</span><span class="k">this term</span></div>' +
+          '<div class="stat"><span class="v">' + x.year + '</span><span class="k">this year</span></div>' +
+          '<div class="stat"><span class="v">' + x.open + '</span><span class="k">not fixed</span></div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  h += '<div class="grouplabel">Over the threshold this term</div>' +
+    (over.length ? '<div class="rows">' + over.map(row).join('') + '</div>'
+      : '<div class="blank">Nobody has reached ' + (at || 'the threshold') + ' this term.</div>');
+  h += '<div class="grouplabel">Everyone else, most first</div>' +
+    (under.length ? '<div class="rows">' + under.map(row).join('') + '</div>'
+      : '<div class="blank">Nobody else has been picked up.</div>');
+  return h;
+}
+
+function groomClassesHtml(d){
+  /* BOTH FIGURES, AND THE PER-HEAD ONE IS WHY. A big class will always have
+     more offences than a small one, so a raw total quietly ranks classes by
+     size. Per student is the number that means what somebody will read it as
+     meaning, and both are here so nobody has to take that on trust. */
+  var h = '<div class="note warn"><b>Read this one carefully.</b> A bigger class collects more ' +
+    'offences than a smaller one whatever its form teacher does, so the total on its own ranks ' +
+    'classes by size. The per-student figure beside it is the comparable one.</div>' +
+    '<table class="etbl"><thead><tr><th>Class</th><th class="c">This term</th>' +
+    '<th class="c">This year</th><th class="c">Students</th><th class="c">Per student</th>' +
+    '<th class="c">Not fixed</th></tr></thead><tbody>';
+  (d.classes||[]).forEach(function(c){
+    h += '<tr><td>' + esc(c.cls) + '</td>' +
+      '<td class="n">' + c.term + '</td><td class="n">' + c.year + '</td>' +
+      '<td class="n">' + c.students + '</td><td class="n">' + c.perStudent.toFixed(2) + '</td>' +
+      '<td class="n">' + c.open + '</td></tr>';
+  });
+  return h + '</tbody></table>';
+}
+
+function groomCategoriesHtml(d){
+  var h = '<div class="lede">What is actually being picked up. The students column is how many ' +
+    'different students, not how many offences &mdash; one student pulled up eight times for ' +
+    'the same thing is a different problem from eight students pulled up once.</div>' +
+    '<table class="etbl"><thead><tr><th>Category</th><th class="c">This term</th>' +
+    '<th class="c">This year</th><th class="c">Students</th><th class="c">Not fixed</th>' +
+    '</tr></thead><tbody>';
+  (d.categories||[]).forEach(function(c){
+    h += '<tr><td>' + esc(c.name) + '</td>' +
+      '<td class="n">' + c.term + '</td><td class="n">' + c.year + '</td>' +
+      '<td class="n">' + c.students + '</td><td class="n">' + c.open + '</td></tr>';
+  });
+  return h + '</tbody></table>';
+}
+
 
 /* ── the daily email ──────────────────────────────────────────────────── */
 function picked(){
@@ -2156,7 +2085,7 @@ function sentHtml(){
     '<div class="lede">Written on the offence that reached the tier &mdash; ' +
       'the date, your name, and what the tier asked for. ' +
       'The counts on the previous screen are still from the last snapshot; ' +
-      'they catch up at the next rebuild, within ten minutes.</div>' + extra +
+      'they catch up at the next hourly rebuild.</div>' + extra +
     '<div class="stack">' +
       '<button data-go="lc">Back to ' + esc(areaOf(S.area).title) + '</button>' +
       '<button class="ghost" data-go="menu">All areas</button>' +
@@ -2217,8 +2146,6 @@ function wire(){
   if ($('pw')) $('pw').addEventListener('keydown', function(e){ if (e.key==='Enter') signIn(); });
   if ($('nm')) { if (S.name) { if ($('pw')) $('pw').focus(); } else $('nm').focus(); }
   if ($('out')) $('out').addEventListener('click', signOut);
-  if ($('rfr')) $('rfr').addEventListener('click', refreshNow);
-  if ($('fresh')) $('fresh').addEventListener('click', takePending);
 
   if ($('mail')) $('mail').addEventListener('click', function(){
     go('email');
@@ -2233,11 +2160,11 @@ function wire(){
     S.ask = { kind: heldNow(S.student) ? 'unhold' : 'hold' }; S.err=''; render();
   });
   if ($('doask')) $('doask').addEventListener('click', doAsk);
-  if ($('ddo')) $('ddo').addEventListener('click', doDocReverse);
-  if ($('dnope')) $('dnope').addEventListener('click', function(){ S.dask=null; S.dErr=''; render(); });
-  if ($('drsn')) $('drsn').focus();
-  if ($('dretry')) $('dretry').addEventListener('click', function(){
-    loadDocs().then(function(){ render(true); });
+  if ($('eretry')) $('eretry').addEventListener('click', function(){
+    loadEarly().then(function(){ render(true); });
+  });
+  if ($('gretry')) $('gretry').addEventListener('click', function(){
+    loadGrooming().then(function(){ render(true); });
   });
   if ($('cancelask')) $('cancelask').addEventListener('click', function(){ S.ask=null; S.err=''; render(); });
   if ($('reason')) $('reason').focus();
@@ -2288,16 +2215,17 @@ function wire(){
       return;
     }
 
-    var dcl = t.closest && t.closest('[data-dclose]');
-    if (dcl){ S.dask = dcl.getAttribute('data-dclose'); S.dto = DOC_CLOSED; S.dErr=''; render(); return; }
+    var etab = t.closest && t.closest('[data-etab]');
+    if (etab){ S.etab = etab.getAttribute('data-etab'); render(); return; }
 
-    var dbk = t.closest && t.closest('[data-dback]');
-    if (dbk){ S.dask = dbk.getAttribute('data-dback'); S.dto = DOC_AWAIT; S.dErr=''; render(); return; }
+    var gtab = t.closest && t.closest('[data-gtab]');
+    if (gtab){ S.gtab = gtab.getAttribute('data-gtab'); render(); return; }
 
     var area = t.closest && t.closest('[data-area]');
     if (area){
       var key = area.getAttribute('data-area');
-      if (key === '__docs'){ S.dask=null; S.dErr=''; go('docs'); return; }
+      if (key === '__early'){ go('early'); return; }
+      if (key === '__groom'){ go('groom'); return; }
       var a = areaOf(key);
       if (a && a.built) openArea(key); else go('soon');
       return;

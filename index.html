@@ -422,6 +422,11 @@ var S = {
   groom:null,
   gtab:'students',      // which cut of the grooming figures is showing
 
+  /* Which list the student page was opened from, so its back link goes where
+     the person came from. '' means a snapshot area, which is the old path and
+     the default. */
+  from:'',
+
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
   student:null,         // { id, name, cls, cohort, domain, row } — who is open
@@ -723,7 +728,7 @@ function loadGrooming(){
 function signOut(){
   TOKEN=null; S.teachers=null;
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
-  S.early=null; S.groom=null; S.etab='term'; S.gtab='students';
+  S.early=null; S.groom=null; S.etab='term'; S.gtab='students'; S.from='';
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   render(true);
@@ -1201,7 +1206,14 @@ function rowLineHtml(r){
   return '<div class="tlrow' + (live ? '' : ' off') + '">' +
     '<div class="tld">' + esc(r.date || '—') + '<span>' + esc(r.time || '') + '</span></div>' +
     '<div class="tlb">' +
-      (r.reason ? '<b>' + esc(r.reason) + '</b> ' : '') +
+      /* THE REASON, IN WORDS. hubHistory sends the code — UNWELL, OFFICIAL —
+         because a code is what the Log stores and the label is a cell in
+         🏷️ Reasons that may be reworded at any time. It is turned into the
+         label here, from the list hubEarly already sent, so this screen agrees
+         with the pill the officer tapped at the counter. This is the line that
+         answers "how much has this student left for x reason", which is now
+         the whole reason the early dismissal list has a chevron on it. */
+      (r.reason ? '<b>' + esc(reasonLabel(r.reason)) + '</b> ' : '') +
       (r.source ? '<small>' + esc(r.source) + '</small> ' : '') +
       tags +
       (rem ? '<div class="rem">' + esc(rem) + '</div>' : '') +
@@ -1289,7 +1301,22 @@ function studentHtml(){
      four different kinds into aligned columns and made the wrapping action
      text drag its row out of shape; a card lets each ladder say its own
      figures at its own size. */
-  var stand = '<div class="grouplabel">Where they stand &mdash; from the snapshot</div>' +
+  /* A STUDENT ON NO LADDER AT ALL IS NOW REACHABLE, from 3 August 2026, and
+     this screen had never been asked to draw one. Early dismissal carries no
+     ladder, so a student opened from that list has no snapshot row — and the
+     card grid would have rendered as an empty box under a heading promising
+     figures, which reads as "the snapshot is broken" rather than "there is
+     nothing to follow up".
+
+     IT IS GOOD NEWS AND IT SAYS SO. Everything below this point still works:
+     the whole academic year is read from 📋 Log, not from the snapshot. */
+  var stand = !mine.length
+    ? '<div class="grouplabel">Where they stand</div>' +
+      '<div class="note ok"><b>' + esc(x.name) + ' is not on any follow-up ladder.</b> ' +
+      'Nothing here is outstanding. Their full record for the year is below &mdash; it is read ' +
+      'from &#128203; Log directly, so it is complete whether or not they have ever reached a ' +
+      'ladder.</div>'
+    : '<div class="grouplabel">Where they stand &mdash; from the snapshot</div>' +
     '<div class="lgrid">' + mine.map(function(r){
       var here = (r.entryId === x.entryId);
       var thu  = (r.domain === 'Thursday privilege');
@@ -1317,12 +1344,19 @@ function studentHtml(){
       : '');
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
-    '<div class="appbar"><a data-go="lc">&larr; ' + esc(areaOf(S.area).title) + '</a>' +
+    /* THE BACK LINK GOES WHERE YOU CAME FROM. areaOf(S.area) is null for a
+       student opened from early dismissal — that area is not in AREAS — and
+       reading .title off it threw, taking the whole render with it. */
+    '<div class="appbar">' +
+      (S.from === 'early'
+        ? '<a data-go="early">&larr; Early dismissals</a>'
+        : '<a data-go="lc">&larr; ' + esc((areaOf(S.area) || {}).title || 'Back') + '</a>') +
       '<span>&middot;</span><a data-go="menu">All areas</a></div>' +
     '<h1>' + esc(x.name) + '</h1>' +
     '<div class="who">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) +
-      ' &middot; opened from ' + esc(x.domain) +
-      (heldNow(x) ? ' &middot; <b>follow-up on hold</b>' : '') + '</div>' +
+      (x.domain ? ' &middot; opened from ' + esc(x.domain)
+                : ' &middot; opened from early dismissals') +
+      (x.domain && heldNow(x) ? ' &middot; <b>follow-up on hold</b>' : '') + '</div>' +
 
     stand +
 
@@ -1330,12 +1364,18 @@ function studentHtml(){
       ' excused just now.</b> The figures above still come from the last snapshot and ' +
       'will drop at the next hourly rebuild.</div>' : '') +
 
-    (S.ask ? askHtml() :
-      '<div class="stack rowwise">' +
-        '<button class="ghost" id="hold">' +
-          (heldNow(x) ? 'Release the hold on ' + esc(x.domain) : 'Hold follow-up for ' + esc(x.domain)) +
-        '</button>' +
-      '</div>') +
+    /* NO HOLD BUTTON WITHOUT A LADDER TO HOLD. A hold suspends follow-up on
+       one ladder, so on a student who is on none it would have read "Hold
+       follow-up for" with nothing after it, and written a hold against an
+       empty domain. Excusing individual rows below still works, which is the
+       one thing that does apply to an early dismissal. */
+    (S.ask ? askHtml() : (x.domain
+      ? '<div class="stack rowwise">' +
+          '<button class="ghost" id="hold">' +
+            (heldNow(x) ? 'Release the hold on ' + esc(x.domain) : 'Hold follow-up for ' + esc(x.domain)) +
+          '</button>' +
+        '</div>'
+      : '')) +
 
     '<div class="grouplabel">Everything recorded in ' +
       (S.history ? esc(S.history.academicYear) : 'the academic year') +
@@ -1385,49 +1425,73 @@ function earlyFlagged(){
   });
 }
 
-/* "3 that count, and 5 in all — 2 for official school events." NAMED, never
-   lumped. This is the 30 July decision, point 1c, and the reason is a privacy
-   one as much as a clarity one: with medical appointments no longer counting, a
-   bucket labelled "school events" would quietly contain a student's hospital
-   visits, on a screen several people read. */
-function earlyWhy(x, span){
+/* A reason code back to its label. hubEarly sends the list; hubHistory sends
+   only the code, so this is also what the student page uses to turn UNWELL
+   into "Unwell". Falls back to the code rather than to nothing — an unlabelled
+   code is ugly and readable, a blank is neither. */
+function reasonLabel(code){
   var meta = (S.early && S.early.reasonMeta) || [];
-  var parts = [];
-  meta.forEach(function(m){
-    var r = x.reasons && x.reasons[m.code];
-    var n = r ? (span === 'term' ? r.term : r.year) : 0;
-    if (n) parts.push(n + ' ' + m.label.toLowerCase() + (m.counts ? '' : ' (does not count)'));
-  });
-  return parts.length ? parts.join(' &middot; ') : 'no breakdown recorded';
+  for (var i = 0; i < meta.length; i++) if (meta[i].code === code) return meta[i].label;
+  return String(code || '');
 }
 
+/* ONE NUMBER, FROM 3 AUGUST 2026, AND THIS IS THE NOTE EXPLAINING WHY THERE
+   USED TO BE TWO.
+
+   The row used to print "3 that count" beside "5 in all", with the per-reason
+   breakdown spelled out underneath. Kim: "the 'count' actually doesn't matter
+   coz it's damn rare for it to overlap… if we just count everything and put
+   the number there, and then we allow u to go into the student page, u can
+   then see from there just how much the student has left for x reason."
+
+   She is right, and the fix was not on this page. Two figures on one line is
+   the shape you reach for when the list is being asked to do two jobs — be
+   scannable, and be complete. It cannot do both. So the list is now scannable
+   and the student page is complete, which is what the chevron on every row is
+   for.
+
+   THE NUMBER SHOWN IS THE NUMBER THE THRESHOLD USES. That is not a detail. A
+   row reading 6 that does not flag at a threshold of 5 is a screen nobody can
+   trust, and it was the unavoidable consequence of showing the total while
+   flagging on a subset. The counted set was redrawn instead — see SEED_REASONS
+   in SheetTools.gs — so that the two are the same number: everything except
+   the departures the school itself caused. */
 function earlyRowHtml(x, span, at){
-  var n     = span === 'term' ? x.term    : x.year;
-  var all   = span === 'term' ? x.termAll : x.yearAll;
-  var over  = at > 0 && n >= at;
-  var meta  = [x.cls || 'class unknown'];
-  if (x.termNo) meta.push(span === 'term' ? 'term ' + x.termNo : 'academic year ' + (S.early.academicYear||''));
+  var n    = span === 'term' ? x.term : x.year;
+  var over = at > 0 && n >= at;
+
+  var meta = [x.cls || 'class unknown'];
   if (x.lastDate) meta.push('last left early ' + x.lastDate);
+  /* SAID ONLY WHEN IT IS TRUE. Most students have no school-directed
+     departures at all, and a permanent "0 school events" on every row is the
+     second figure coming back in through the door it was just shown out of. */
+  var directed = (span === 'term' ? x.termAll - x.term : x.yearAll - x.year);
+  if (directed > 0) meta.push(directed + ' more for awards or school events, not counted');
 
   return '<div class="row flat' + (over ? ' t3' : '') + '">' +
       '<div class="body">' +
         '<div class="p">' + esc(x.name) + '</div>' +
         '<div class="meta">' + meta.map(esc).join(' &middot; ') + '</div>' +
-        '<div class="s">' + earlyWhy(x, span) + '</div>' +
       '</div>' +
       '<div class="stats">' +
-        '<div class="stat"><span class="v">' + n + '</span><span class="k">that count</span></div>' +
-        '<div class="stat"><span class="v">' + all + '</span><span class="k">in all</span></div>' +
+        '<div class="stat"><span class="v">' + n + '</span><span class="k">' +
+          (span === 'term' ? 'this term' : 'this year') + '</span></div>' +
       '</div>' +
       '<div class="dside">' +
-        (over ? '<span class="tag t3">Over ' + at + '</span>' : '<span class="tag quiet">&nbsp;</span>') +
-        /* NO BUTTON WITHOUT A STUDENT ID. A student recorded before they were in
-           the Master Database has no ID, and openStudent('') would fetch an empty
-           history and print it as though the student had a clean record. */
-        (x.studentId
-          ? '<button class="ghost sm" data-open="' + esc(x.studentId) + '">Their record</button>'
-          : '<span class="tag quiet">no student ID</span>') +
+        (over ? '<span class="tag t3">Over ' + at + '</span>' : '') +
       '</div>' +
+      /* THE SAME CHEVRON AS THE LATECOMING LIST, and deliberately the same:
+         one gesture that means "open this student" everywhere in the Hub.
+         data-eopen, not data-open, because data-open carries a SNAPSHOT ENTRY
+         ID and these students have no snapshot row at all — early dismissal
+         has no ladder, so it reaches no snapshot. Reusing the attribute would
+         have looked right and silently done nothing. */
+      (x.studentId
+        ? '<div class="rowgo opn" data-eopen="' + esc(x.studentId) +
+            '" title="Open ' + esc(x.name) + '">' +
+            '<span class="lbl">Open</span><span class="chev">&rarr;</span></div>'
+        : '<div class="rowgo" title="No student ID, so there is no record to open">' +
+            '<span class="chev" style="opacity:.25">&rarr;</span></div>') +
     '</div>';
 }
 
@@ -1446,28 +1510,55 @@ function earlyHtml(){
   var d    = S.early;
   var span = S.etab === 'year' ? 'year' : 'term';
   var at   = Number((d.concernAt || {})[span]) || 0;
+
   var list = earlyStudents().slice().sort(function(a, b){
-    return (span === 'term' ? (b.term - a.term) || (b.termAll - a.termAll)
-                            : (b.year - a.year) || (b.yearAll - a.yearAll)) ||
+    return (span === 'term' ? (b.term - a.term) : (b.year - a.year)) ||
+           (b.yearAll - a.yearAll) ||
            String(a.cls).localeCompare(String(b.cls)) ||
            String(a.name).localeCompare(String(b.name));
   });
   var over  = list.filter(function(x){ return at > 0 && (span==='term'?x.term:x.year) >= at; });
   var under = list.filter(function(x){ return !(at > 0 && (span==='term'?x.term:x.year) >= at); });
 
-  /* No builtHtml() here, deliberately. This answer is live and has no age. */
+  /* THE BACK LINK IS AT THE TOP, in the same appbar the student page uses.
+     A control you need before you have read the screen does not belong after
+     it — and this list can run to a hundred rows, which made the old footer
+     button a scroll rather than a click. */
   var h = '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="appbar"><a data-go="menu">&larr; All areas</a></div>' +
+    /* No builtHtml() here, deliberately. This answer is live and has no age. */
     '<div class="date">' + esc(todayLong()) +
       ' <span class="built">as at ' + esc(d.serverTime || '') + '</span></div>' +
     '<h1>Early dismissals</h1>' +
-    '<div class="who">Who has left school early, how often, and why. This screen records ' +
-      'nothing and decides nothing &mdash; there is no ladder for early dismissal. It is here ' +
-      'so a pattern is visible before somebody has to go looking for it.</div>';
+    '<div class="who">Who has left school early, and how often. This screen records nothing ' +
+      'and decides nothing &mdash; there is no ladder for early dismissal. Open a student to ' +
+      'see what each of their departures was for.</div>';
 
-  /* THE TWO TABS ARE TWO DIFFERENT QUESTIONS, not two zoom levels. A term
-     catches the cluster — three in a few weeks is a student having a bad term.
-     A year catches the accumulator — twice a term, every term, which no single
-     term ever notices. Neither one finds the other's student. */
+  /* TODAY FIRST, FROM 3 AUGUST 2026. It was at the bottom on the reasoning
+     that the running record is the committee's job and today's traffic is the
+     General Office's. That was wrong about who reads this: somebody opening it
+     mid-morning wants to know what has just happened, and the running record
+     is unchanged since yesterday. The thing that moves goes at the top. */
+  var today = d.today || [];
+  h += '<div class="grouplabel">Left early today</div>' +
+    (today.length
+      ? '<div class="rows">' + today.map(function(t){
+          return '<div class="row flat"><div class="body">' +
+            '<div class="p">' + esc(t.name) + '</div>' +
+            '<div class="meta">' + [t.cls, t.time, t.reasonLabel].map(esc).join(' &middot; ') +
+            '</div>' +
+          '</div><div class="dside">' +
+            (t.counts ? '' : '<span class="tag quiet">Not counted</span>') +
+          '</div>' +
+          (t.studentId
+            ? '<div class="rowgo opn" data-eopen="' + esc(t.studentId) +
+                '" title="Open ' + esc(t.name) + '">' +
+                '<span class="lbl">Open</span><span class="chev">&rarr;</span></div>'
+            : '') +
+          '</div>';
+        }).join('') + '</div>'
+      : '<div class="blank">Nobody has left early today.</div>');
+
   h += '<div class="tabs">' +
     '<a class="' + (span==='term'?'on':'') + '" data-etab="term">This term</a>' +
     '<a class="' + (span==='year'?'on':'') + '" data-etab="year">This year</a>' +
@@ -1475,16 +1566,17 @@ function earlyHtml(){
 
   h += at > 0
     ? '<div class="note ok"><b>The threshold is ' + at + ' ' + (span==='term'?'in a term':'in a year') +
-      '.</b> It counts only the reasons marked <i>Counts</i> in &#127991;&#65039; Reasons &mdash; ' +
-      'so a student the school itself pulled out for a prize-giving never appears here for it. ' +
-      'Change the number in &#9881;&#65039; Config, against <i>Early dismissal concern at</i>. ' +
-      'Crossing it puts a student on this list and colours a line on the General Office phone. ' +
-      'It does nothing else.</div>'
+      '.</b> The number on each row is every early dismissal except the ones the school itself ' +
+      'caused &mdash; an awards ceremony or an official school event. Everything else counts, ' +
+      'including a medical appointment. Change the threshold in &#9881;&#65039; Config, against ' +
+      '<i>Early dismissal concern at</i>; change what counts in the <i>Counts</i> column of ' +
+      '&#127991;&#65039; Reasons. Crossing it puts a student on this list and colours a line on ' +
+      'the General Office phone. It does nothing else.</div>'
     : '<div class="note warn"><b>No threshold is set for this view.</b> Put a number in ' +
       '&#9881;&#65039; Config against <i>Early dismissal concern at</i> and this list will ' +
       'separate out the students worth a conversation.</div>';
 
-  h += '<div class="grouplabel">Over the threshold</div>' +
+  h += '<div class="grouplabel">Over the threshold &mdash; most first</div>' +
     (over.length ? '<div class="rows">' + over.map(function(x){ return earlyRowHtml(x, span, at); }).join('') + '</div>'
       : '<div class="blank">Nobody has reached ' + (at || 'the threshold') + ' ' +
         (span==='term'?'this term':'this year') + '.</div>');
@@ -1493,32 +1585,45 @@ function earlyHtml(){
     (under.length ? '<div class="rows">' + under.map(function(x){ return earlyRowHtml(x, span, at); }).join('') + '</div>'
       : '<div class="blank">Nobody else has left early ' + (span==='term'?'this term':'this year') + '.</div>');
 
-  /* TODAY, LAST AND SMALL. It is the General Office's screen that exists to
-     answer "who has gone home", and repeating it here as the headline would
-     make a committee screen look like a front-desk one. It is worth having at
-     the bottom because it is the one part of this record that changes hour by
-     hour. */
-  var today = d.today || [];
-  h += '<div class="grouplabel">Left early today</div>' +
-    (today.length
-      ? '<div class="rows">' + today.map(function(t){
-          return '<div class="row flat"><div class="body">' +
-            '<div class="p">' + esc(t.name) + '</div>' +
-            '<div class="meta">' + [t.cls, t.time, t.reasonLabel].map(esc).join(' &middot; ') + '</div>' +
-          '</div><div class="dside">' +
-            (t.counts ? '<span class="tag t2">Counts</span>' : '<span class="tag quiet">Does not count</span>') +
-          '</div></div>';
-        }).join('') + '</div>'
-      : '<div class="blank">Nobody has left early today.</div>');
-
   h += '<div class="foot"><span>This screen writes nothing. It cannot change whether a slip ' +
     'counts &mdash; that is the <i>Counts</i> column in &#127991;&#65039; Reasons &mdash; and it ' +
-    'cannot remove a slip. To take one out of a student&rsquo;s total, overturn it on their ' +
-    'record.</span><span class="sp"></span>' +
-    '<button class="plain" data-go="menu">Back to all areas</button></div>';
+    'cannot remove a slip. To take one out of a student&rsquo;s total, open them and excuse ' +
+    'it.</span></div>';
 
   return h + '</div></div>';
 }
+
+/* ── opening a student who is on no ladder ─────────────────────────────────
+   openStudent() finds its student in allRows(), which is the SNAPSHOT — and
+   early dismissal never reaches the snapshot, because ED carries no ladder.
+   So the chevron on the early dismissal list needs its own way in, building
+   the student from the record it already has rather than looking one up.
+
+   THE SYNTHETIC STUDENT HAS NO DOMAIN AND NO TIER, and the student page has
+   been taught to cope rather than being handed a fake ladder to keep it happy.
+   A tier invented here would appear on screen as a real one. */
+function openStudentFromEarly(studentId){
+  var rec = null;
+  earlyStudents().forEach(function(r){ if (r.studentId === studentId) rec = r; });
+  /* Today's list carries students who may have no running record yet — their
+     first ever slip. Fall back to it so their first departure is still openable. */
+  if (!rec){
+    ((S.early && S.early.today) || []).forEach(function(r){
+      if (r.studentId === studentId) rec = { studentId: r.studentId, name: r.name,
+                                             cls: r.cls, cohort: r.cohort || '' };
+    });
+  }
+  if (!rec) return;
+
+  S.student = { id: rec.studentId, name: rec.name, cls: rec.cls,
+                cohort: rec.cohort || '', domain: '', tier: 0, entryId: '' };
+  S.history = null; S.hErr = ''; S.ask = null;
+  S.from = 'early';
+  S.hLoading = true;
+  go('student');
+  loadHistory(rec.studentId);
+}
+
 
 /* ── grooming and attire ──────────────────────────────────────────────── */
 /* ADDED 3 AUGUST 2026, reversing the earlier position that the Hub did not
@@ -2190,6 +2295,14 @@ function wire(){
       if (u) window.open(u, '_blank', 'noopener');
       return;
     }
+
+    /* BEFORE [data-open], and it has to be. A .rowgo carrying data-eopen has
+       no data-open on it, so the order is not strictly load-bearing today —
+       but the two mean different things (a student ID versus a snapshot entry
+       ID) and putting the more specific one first is what stops a future row
+       that carries both from silently taking the wrong path. */
+    var eopn = t.closest && t.closest('[data-eopen]');
+    if (eopn){ e.stopPropagation(); openStudentFromEarly(eopn.getAttribute('data-eopen')); return; }
 
     var opn = t.closest && t.closest('[data-open]');
     if (opn){ e.stopPropagation(); openStudent(opn.getAttribute('data-open')); return; }

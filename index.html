@@ -782,11 +782,14 @@ function api(action, body){
   function attempt(){
     return apiOnce(action, payload).catch(function(e){
       if (!e || !e.badReply || left <= 0) throw e;
+      /* GROWING, AND JITTERED — changed 4 August 2026 once the cause was known.
+         A FIXED delay is the wrong shape when the fault is collision: two
+         clients that collide, both wait exactly 700ms, and collide again. The
+         wait now doubles each time and carries a random spread, which is what
+         pulls two unlucky clients apart instead of keeping them in step. */
+      var wait = 500 * Math.pow(2, 3 - left) + Math.floor(Math.random() * 400);
       left--;
-      /* Backing off rather than firing straight back. The fault is Google
-         losing a reply, and a second identical request in the same instant is
-         more likely to land in the same hole than a moment later. */
-      return new Promise(function(res){ setTimeout(res, 700); }).then(attempt);
+      return new Promise(function(res){ setTimeout(res, wait); }).then(attempt);
     });
   }
   return attempt();

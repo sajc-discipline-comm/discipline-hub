@@ -98,16 +98,29 @@ h2{font-size:24px;margin-bottom:4px}
    the second thing anybody does after a failed sign-in is type it wrong again.
    The eye is a BUTTON, not a checkbox, and it is type="button" — inside a form
    a bare <button> submits, which would have signed you in mid-peek. */
+/* THE RESET IS THE POINT OF THIS BLOCK, and it is why the eye had a box.
+   This page styles the bare <button> ELEMENT — background, padding, 9px
+   corners and a drop shadow — so every button gets a pill unless it opts out.
+   `.peek` set border and background but not box-shadow, border-radius,
+   padding or the hover transform, so the shadow and the corners survived and
+   the icon sat in a little raised box. The green slip and gate pages put that
+   styling on a .btn CLASS instead, which is why the identical markup looked
+   right there and wrong here. Everything the element rule sets is undone here
+   explicitly rather than by hoping specificity sorts it out. */
 .field.pw{position:relative}
-.field.pw input{padding-right:38px}
-.peek{position:absolute;right:0;bottom:5px;border:0;background:none;cursor:pointer;
-  padding:7px 2px;color:var(--muted);transition:color .2s var(--curve)}
-.peek:hover{color:var(--accent)}
+.field.pw input{padding-right:44px}
+.peek{position:absolute;right:0;bottom:5px;padding:7px 2px;
+  border:0;background:none;box-shadow:none;border-radius:0;
+  color:var(--muted);cursor:pointer;font:inherit;
+  transition:color .2s ease}
+.peek:hover{background:none;box-shadow:none;transform:none;color:var(--accent)}
+.peek:active{transform:none}
 .peek svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7;
   stroke-linecap:round;stroke-linejoin:round;display:block}
-.peek .slash{opacity:0;transition:opacity .2s var(--curve)}
+.peek .slash{opacity:0;transition:opacity .2s ease}
 .peek.showing .slash{opacity:1}
 .peek:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:5px}
+
 
 /* ═══ THE STUDENT PAGE, REBUILT 3 AUGUST 2026 ══════════════════════════
    The year used to be one flat list grouped by status: every record, every

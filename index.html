@@ -966,8 +966,37 @@ function paintGoogle(){
 /* Google hands back a signed token. It is sent to the server ONCE and
    exchanged for this project's own token; nothing else on the page ever sees
    it again, and it is deliberately not stored anywhere. */
+/* WHICH ACCOUNT DID GOOGLE ACTUALLY HAND US? Read straight out of the token's
+   middle segment, which is plain base64 JSON.
+
+   ⚠ THIS IS NOT VERIFICATION AND MUST NEVER BE TREATED AS ANY. Anybody can
+   write anything into a JWT payload; only the server's check of the signature
+   means a thing. This is used for ONE purpose — telling the person on screen
+   which account they were actually signed in as — and that is exactly the
+   question that is impossible to answer otherwise, because Google's own bubble
+   keeps showing whichever account it picked last. */
+function peekEmail(jwt){
+  try {
+    var mid = String(jwt).split('.')[1];
+    var pad = mid.replace(/-/g, '+').replace(/_/g, '/');
+    while (pad.length % 4) pad += '=';
+    return String(JSON.parse(atob(pad)).email || '');
+  } catch (e) { return ''; }
+}
+
+/* After ANY failed sign-in, tell Google to stop auto-selecting. Without this
+   the next attempt silently reuses the SAME account — so somebody who thinks
+   they are picking their school account gets handed the personal one again,
+   sees the same refusal, and has no way of knowing why. It is the single most
+   confusing failure this screen can produce. */
+function forgetGoogleChoice(){
+  try { if (typeof google !== 'undefined' && google.accounts && google.accounts.id)
+          google.accounts.id.disableAutoSelect(); } catch(e){}
+}
+
 function onGoogleCredential(resp){
   if (!resp || !resp.credential){ S.gerr = 'That sign-in did not complete. Try again.'; render(); return; }
+  var saw = peekEmail(resp.credential);
   S.gerr = ''; S.busy = true; render();
   api('hubGoogleLogin', { credential: resp.credential }).then(function(res){
     if (!res || !res.ok){
@@ -976,7 +1005,14 @@ function onGoogleCredential(resp){
          A message about the wrong Google account sitting beside a password box
          reads as "your password is wrong", which sends somebody hunting for
          the wrong problem. */
-      S.gerr = (res && res.error) || 'Could not sign in.';
+      /* ESCAPED HERE. The server's sentence contains the email address it was
+         given, which came from a token this page did not write — so it is the
+         one string in this box that must not be trusted as markup. */
+      S.gerr = esc((res && res.error) || 'Could not sign in.');
+      forgetGoogleChoice();
+      if (saw) S.gerr += '<br><br>Google signed you in as <b>' + esc(saw) + '</b>. ' +
+        'If that is not the account you meant, the chooser will appear next time &mdash; ' +
+        'Google had been reusing your last choice without asking.';
       render();
       return;
     }
@@ -988,8 +1024,9 @@ function onGoogleCredential(resp){
     });
   }).catch(function(e){
     S.busy = false;
-    S.gerr = 'Signing in with Google worked &mdash; this is the Hub\'s own server. ' +
-             reachErr(e, 'complete the sign-in');
+    S.gerr = 'Signing in with Google worked' + (saw ? ', as <b>' + esc(saw) + '</b>' : '') +
+             ' &mdash; what follows is the Hub\'s own server. ' + reachErr(e, 'complete the sign-in');
+    forgetGoogleChoice();
     render();
   });
 }
@@ -1202,7 +1239,12 @@ function signinHtml(){
     (GOOGLE_CLIENT_ID
       ? '<div class="gwrap">' +
           '<div id="gbtn"></div>' +
-          (S.gerr ? '<div class="note err">' + esc(S.gerr) + '</div>' : '') +
+          /* NOT esc()'d, and that is deliberate — this one string is BUILT as
+             HTML, with every dynamic part (the email Google returned, the
+             snippet from the server) escaped at the point it goes in. Escaping
+             the whole thing here printed "&mdash;" and "<b>" on screen as
+             literal text, which Kim rightly read as the page being broken. */
+          (S.gerr ? '<div class="note err">' + S.gerr + '</div>' : '') +
           '<div class="gor"><span>or use the committee password</span></div>' +
         '</div>'
       : '') +

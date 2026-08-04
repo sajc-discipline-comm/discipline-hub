@@ -687,13 +687,31 @@ function esc(s){ return String(s===null||s===undefined?'':s)
    throws an error the callers can tell apart. A lost or unreadable reply is
    not evidence about what the server did, and nothing in this page may claim
    otherwise. */
-function api(action, body){
-  if (window.__mockApi) return window.__mockApi(action, body);
-  var payload = body || {};
-  payload.action = action;
+/* ── ACTIONS THAT ARE SAFE TO SEND TWICE ──────────────────────────────────
+   Every read, and the three sign-ins — none of them changes anything, so
+   sending one again costs a second and risks nothing.
+
+   EVERYTHING ELSE IS ABSENT ON PURPOSE, and the omissions are the important
+   part of this list: logScan, logEarly, hubStamp, hubOverturn, hubHold,
+   hubUnhold, hubSchedule, undo. Retrying a write that already landed is how a
+   student gets recorded late twice for one morning — a far worse outcome than
+   an error message, because nobody would ever notice it. When a write's reply
+   goes missing the honest answer is "it may have worked, go and look", which
+   is exactly what the message says. */
+var RETRY_SAFE = {
+  hubLogin:1, goLogin:1, gateLogin:1, hubGoogleLogin:1,
+  hubSnapshot:1, hubDetention:1, hubEarly:1, hubLive:1, hubHistory:1,
+  hubTeachers:1, hubGrooming:1, hubGroomingStudent:1, bootstrap:1, refresh:1
+};
+
+function apiOnce(action, payload){
   return fetch(GAS_URL, {
     method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify(payload), redirect:'follow'
+    body: JSON.stringify(payload), redirect:'follow',
+    /* Spelled out rather than left to the default. A cross-origin fetch sends
+       no cookies anyway; saying so removes one variable from a failure that
+       took a whole afternoon to pin down. */
+    credentials:'omit', cache:'no-store'
   }).then(function(r){
     return r.text().then(function(txt){
       try { return JSON.parse(txt); }
@@ -701,9 +719,6 @@ function api(action, body){
         var err = new Error('badReply');
         err.badReply = true;
         err.status = r.status;
-        /* Apps Script's error pages say what went wrong in the first line or
-           two of the body. Keeping a short slice of it turns "something broke"
-           into something somebody can act on or send to me. */
         err.snippet = String(txt || '').replace(/<[^>]*>/g, ' ')
                         .replace(/\s+/g, ' ').trim().slice(0, 240);
         throw err;
@@ -712,14 +727,53 @@ function api(action, body){
   });
 }
 
+/* ── WHY THERE IS A RETRY AT ALL ──────────────────────────────────────────
+   /exec does not answer directly. It returns a 302 to a one-time address on
+   script.googleusercontent.com, and the browser follows it to fetch the body.
+   In a browser signed into several Google accounts that second hop
+   INTERMITTENTLY 404s, and what comes back is Google Drive's own "Page not
+   found" page instead of our JSON.
+
+   THE PROOF, 4 August 2026: the failing attempt showed `#drive-logo` and
+   `googlelogo_color` in the body — Drive's not-found page — while the
+   Executions log showed the same doPost COMPLETED in 1.578 seconds. The script
+   ran, did its work and returned. The reply was lost on the way back.
+
+   This is the same fault recorded on 2 August, when an /exec link in an email
+   failed with "unable to open file" on a phone signed into two accounts and
+   worked in incognito on the same device. It was known to affect links. It
+   turns out to affect this fetch too — rarely, and only when several Google
+   sessions are live, which is exactly the state that testing a sign-in screen
+   with four different accounts produces.
+
+   Google sign-in did not cause this and removing it would not fix it. It
+   merely made the browser hold more Google sessions, which made a rare fault
+   frequent enough to find.
+
+   A fresh POST gets a fresh redirect target, so one retry clears it. One, not
+   three: if the second also comes back unreadable the fault is something else,
+   and hammering a server that may be struggling is not a diagnosis. */
+function api(action, body){
+  if (window.__mockApi) return window.__mockApi(action, body);
+  var payload = body || {};
+  payload.action = action;
+  return apiOnce(action, payload).catch(function(e){
+    if (!e || !e.badReply || !RETRY_SAFE[action]) throw e;
+    return new Promise(function(res){ setTimeout(res, 600); })
+      .then(function(){ return apiOnce(action, payload); });
+  });
+}
+
 /* One sentence for a failed call, saying which of the two things happened.
    `what` names the thing being attempted, e.g. 'complete the sign-in'. */
 function reachErr(e, what){
   if (e && e.badReply){
-    return 'The server received the request to ' + what + ' and answered with something ' +
-           'this page could not read &mdash; which usually means the Apps Script project ' +
-           'threw an error rather than that anything is wrong with your connection. ' +
-           'IT MAY HAVE WORKED: check before trying again. ' +
+    return 'The server received the request to ' + what + ' and the reply came back ' +
+           'unreadable &mdash; twice, if this was something safe to send again. ' +
+           'That is usually Google losing the reply rather than anything being wrong with ' +
+           'your connection or your account. IT MAY HAVE WORKED: check before trying again, ' +
+           'and if this keeps happening, closing other Google accounts in this browser is ' +
+           'the thing most likely to help. ' +
            (e.snippet ? '<br><br>Google said: <i>' + esc(e.snippet) + '</i>' : '');
   }
   return 'Could not reach the server at ' + GAS_URL + ' to ' + what + '. Nothing was sent. ' +
@@ -948,6 +1002,13 @@ function paintGoogle(){
   }
   paintGoogle.tries = 0;
   host.innerHTML = '';
+  /* BEFORE initialize(), not after. Google personalises the button — "Sign in
+     as Kim" — from whichever account it decided on last, and on a shared or
+     multi-account machine that card is worse than useless: it names an account
+     while signing you in as a different one, which is precisely the confusion
+     that made a real refusal look like a bug. Turning auto-select off up front
+     means the button always reads "Sign in with Google" and always asks. */
+  try { google.accounts.id.disableAutoSelect(); } catch(e){}
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     callback: onGoogleCredential,

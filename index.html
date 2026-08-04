@@ -121,6 +121,13 @@ h2{font-size:24px;margin-bottom:4px}
 .peek.showing .slash{opacity:1}
 .peek:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:5px}
 
+/* Google's button, and a rule saying the password below it is the fallback. */
+.gwrap{margin-top:26px;max-width:430px}
+.centre .gwrap{margin-left:auto;margin-right:auto}
+.gor{display:flex;align-items:center;gap:14px;margin:22px 0 2px;
+  font-size:12.5px;color:var(--muted);letter-spacing:.02em}
+.gor:before,.gor:after{content:'';flex:1;height:1px;background:var(--line)}
+
 
 /* ═══ THE STUDENT PAGE, REBUILT 3 AUGUST 2026 ══════════════════════════
    The year used to be one flat list grouped by status: every record, every
@@ -548,6 +555,11 @@ table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
   .stats{display:none}
 }
 </style>
+<!-- Google Identity Services. Loaded from Google's own CDN because there is
+     nowhere else it can legitimately come from — this is the library that
+     talks to Google's sign-in. It is deferred, so a slow or blocked load
+     delays nothing: the page falls back to the password. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 
 <body>
@@ -558,6 +570,21 @@ table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
 'use strict';
 
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3ZySAGT4LHV-R4KfB00PGdXL8fu569vrvvUUpzxF8nrhyIw/exec';
+
+/* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
+   Paste the OAuth client ID from Google Cloud Console here, and the SAME value
+   into the spreadsheet: Attendance → ⚙️ Setup and repair → 🔐 Set the Google
+   client ID. Both are needed and they must match — the page uses it to ask
+   Google for a token, and the server uses it to check that the token it
+   receives was minted for THIS application and not for some other site.
+
+   IT IS NOT A SECRET. A client ID is public by design; it is in this file, in
+   a public repository, on purpose. What guards the Hub is the 👥 Access tab.
+
+   LEAVE IT BLANK AND NOTHING BREAKS. The sign-in screen falls back to the
+   committee password, which is how this ships and how it should stay until the
+   Cloud Console side is done and tested. */
+var GOOGLE_CLIENT_ID = '571181488230-dcjqp0psb0v4shndij1490ctg716erv4.apps.googleusercontent.com';
 
 /* The other tools in the project. One bookmark instead of four. */
 var TOOLS = [
@@ -615,6 +642,7 @@ var S = {
      lives in a different spreadsheet and is fetched only when a student page
      opens — never on the menu read, which the sign-in waits behind. */
   gstu:null, gLoading:false,
+  gerr:'',              // a failed Google sign-in, shown under its own button
 
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
@@ -843,6 +871,78 @@ function builtHtml(){
 }
 
 /* ── sign in ──────────────────────────────────────────────────────────── */
+/* ── GOOGLE SIGN-IN ────────────────────────────────────────────────────────
+   Rendered fresh every time the sign-in screen is drawn, because the div it
+   draws into is destroyed and recreated by every render.
+
+   IT IS GUARDED THREE WAYS and every guard has a reason. No client ID means
+   the feature was never set up, so the button is not drawn at all and the
+   password stands alone. No `google` object means the library did not load —
+   a slow network, a blocked CDN, an MOE device policy — and the page must not
+   throw, it must quietly leave the password working. And a render that fires
+   twice must not stack two buttons, hence the emptying first. */
+function paintGoogle(){
+  if (!GOOGLE_CLIENT_ID) return;
+  var host = $('gbtn');
+  if (!host) return;
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.id){
+    /* Try again shortly: `async defer` means the library often arrives after
+       the first paint. Give up quietly after a few seconds — by then it is not
+       coming, and the password below is the answer. */
+    if (paintGoogle.tries === undefined) paintGoogle.tries = 0;
+    if (paintGoogle.tries++ < 12) setTimeout(paintGoogle, 400);
+    else host.innerHTML = '<div class="hintx">Google sign-in could not load. ' +
+                          'Use the committee password below.</div>';
+    return;
+  }
+  paintGoogle.tries = 0;
+  host.innerHTML = '';
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: onGoogleCredential,
+    /* No auto-select and no one-tap prompt. On a shared staffroom laptop,
+       being signed in automatically as whoever used it last is precisely the
+       wrong behaviour for a screen holding every student's record. */
+    auto_select: false,
+    cancel_on_tap_outside: true
+  });
+  google.accounts.id.renderButton(host, {
+    theme: 'outline', size: 'large', width: 320,
+    text: 'signin_with', shape: 'rectangular'
+  });
+}
+
+/* Google hands back a signed token. It is sent to the server ONCE and
+   exchanged for this project's own token; nothing else on the page ever sees
+   it again, and it is deliberately not stored anywhere. */
+function onGoogleCredential(resp){
+  if (!resp || !resp.credential){ S.gerr = 'That sign-in did not complete. Try again.'; render(); return; }
+  S.gerr = ''; S.busy = true; render();
+  api('hubGoogleLogin', { credential: resp.credential }).then(function(res){
+    if (!res || !res.ok){
+      S.busy = false;
+      /* Shown under the Google button, not in the password field's error slot.
+         A message about the wrong Google account sitting beside a password box
+         reads as "your password is wrong", which sends somebody hunting for
+         the wrong problem. */
+      S.gerr = (res && res.error) || 'Could not sign in.';
+      render();
+      return;
+    }
+    TOKEN = res.token;
+    /* THE NAME COMES FROM THE ACCESS TAB, not from anything typed here. */
+    S.user = res.name || res.email;
+    return loadAll().then(function(){
+      S.busy = false; S.view = 'menu'; render(true);
+    });
+  }).catch(function(){
+    S.busy = false;
+    S.gerr = 'Could not reach the server at ' + GAS_URL + ' to complete the sign-in. ' +
+             'The sign-in with Google itself worked — this is the Hub\'s own server.';
+    render();
+  });
+}
+
 function signIn(){
   var pw = $('pw') ? $('pw').value : '';
   var nm = $('nm') ? $('nm').value.trim() : '';
@@ -960,7 +1060,12 @@ function signOut(){
   TOKEN=null; S.teachers=null;
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
   S.early=null; S.groom=null; S.etab='term'; S.gtab='students'; S.from='';
-  S.pending={ det:false, early:false, groom:false };
+  S.pending={ det:false, early:false, groom:false }; S.gerr='';
+  /* Tell Google to forget the automatic-selection preference too. Without
+     this, signing out of the Hub and signing back in silently reuses the same
+     account — which on a shared laptop is the opposite of signing out. */
+  try { if (typeof google !== 'undefined' && google.accounts && google.accounts.id)
+          google.accounts.id.disableAutoSelect(); } catch(e){}
   S.gstu=null; S.gLoading=false;
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
@@ -1017,8 +1122,32 @@ function signinHtml(){
     '<div class="date">' + esc(todayLong()) + '</div>' +
     '<h1 class="big">SAJC Discipline Committee Hub</h1>' +
     '<div class="gap"></div>' +
+    /* The typed name is only for the PASSWORD path. A Google sign-in takes
+       the name from the 👥 Access tab instead, which is why it stops being
+       something anybody can type as a colleague. */
     '<div class="field"><label>Your name</label>' +
-      '<input id="nm" autocomplete="name" value="' + esc(S.name || S.user) + '"></div>' +
+      '<input id="nm" autocomplete="name" value="' + esc(S.name || S.user) + '">' +
+      (GOOGLE_CLIENT_ID ? '<div class="hintx">Only needed for the password sign-in &mdash; ' +
+        'a Google sign-in uses the name on the access list.</div>' : '') + '</div>' +
+    /* ── GOOGLE FIRST, PASSWORD BENEATH ───────────────────────────────
+       Both are shown while the change beds in. The password is the fallback
+       for the week after switching over, so that a problem with Google
+       sign-in is an inconvenience rather than a committee locked out of its
+       own system on a Tuesday. Once a week has passed with nobody needing
+       it, the password half comes out — and the un-throttled login that
+       comes with it goes too, which is the actual prize.
+
+       THE BUTTON IS DRAWN BY GOOGLE, into the empty div below. It is not
+       styled here and should not be: a sign-in button that does not look
+       like Google's own is the shape of every phishing page ever built, and
+       staff are trained to distrust it. */
+    (GOOGLE_CLIENT_ID
+      ? '<div class="gwrap">' +
+          '<div id="gbtn"></div>' +
+          (S.gerr ? '<div class="note err">' + esc(S.gerr) + '</div>' : '') +
+          '<div class="gor"><span>or use the committee password</span></div>' +
+        '</div>'
+      : '') +
     '<div class="field pw"><label>Committee password</label>' +
       '<input type="password" id="pw" autocomplete="current-password" autocapitalize="off" spellcheck="false">' +
       '<button type="button" class="peek" id="peek" aria-label="Show the password" title="Show the password">' +
@@ -2861,6 +2990,11 @@ function wire(){
      re-render would mean a password left visible on a staffroom screen after
      a failed attempt redrew the page — so it deliberately resets to hidden
      every time this screen is drawn. */
+  /* Draw Google's button whenever the sign-in screen exists. It has to happen
+     in wire() rather than once at startup, because render() replaces the div
+     it draws into every time the screen is redrawn. */
+  if ($('gbtn')) paintGoogle();
+
   if ($('peek')) $('peek').addEventListener('click', function(){
     var f = $('pw'); if (!f) return;
     var showing = f.type === 'text';

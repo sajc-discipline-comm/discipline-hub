@@ -642,6 +642,7 @@ var S = {
      lives in a different spreadsheet and is fetched only when a student page
      opens — never on the menu read, which the sign-in waits behind. */
   gstu:null, gLoading:false,
+  groomTried:false,     // has grooming been fetched at all this session?
   gerr:'',              // a failed Google sign-in, shown under its own button
   /* The verified address from a Google sign-in. Blank on the password path —
      which is itself the useful signal, since it means nobody can say WHO is
@@ -710,10 +711,17 @@ function esc(s){ return String(s===null||s===undefined?'':s)
    sessions are most likely to be live and where Kim hit it on 4 August with
    one retry already in place. Sign-ins change nothing, so three attempts are
    as safe as one. */
+/* THREE EXTRA ATTEMPTS, RAISED FROM ONE ON 4 AUGUST, once the failure rate was
+   actually measured: a third of requests failing on one of Kim's machines.
+   Three retries turn a 63% per-request success into about 98%, and since a
+   sign-in is now only TWO requests, that is roughly 96% of sign-ins landing
+   complete — against one in ten before any of this.
+   Writes are still absent, for the reason that has not changed: retrying a
+   write whose reply went missing is how one late arrival becomes two. */
 var RETRY_SAFE = {
-  hubLogin:2, goLogin:2, gateLogin:2, hubGoogleLogin:2,
-  hubSnapshot:1, hubDetention:1, hubEarly:1, hubLive:1, hubHistory:1,
-  hubTeachers:1, hubGrooming:1, hubGroomingStudent:1, bootstrap:1, refresh:1
+  hubLogin:3, goLogin:3, gateLogin:3, hubGoogleLogin:3,
+  hubAll:3, hubSnapshot:3, hubDetention:3, hubEarly:3, hubLive:3, hubHistory:3,
+  hubTeachers:3, hubGrooming:3, hubGroomingStudent:3, bootstrap:3, refresh:3
 };
 
 function apiOnce(action, payload){
@@ -1114,8 +1122,25 @@ function onGoogleCredential(resp){
     });
   }).catch(function(e){
     S.busy = false;
+    /* ── PHONES, 4 AUGUST 2026 ───────────────────────────────────────────
+       Google sign-in on this page fails reliably on a phone and works
+       reliably on a laptop — including in incognito on both, which rules out
+       the multi-account fault that explained the earlier desktop failures.
+       The Executions log shows doPost COMPLETED each time, so the request
+       arrives and the script runs; the reply is lost on the way back, and
+       three attempts do not clear it.
+       The cause is not established. What IS established is that the password
+       below works on the same phone, so the useful thing this screen can do is
+       say so plainly rather than offer a generic error and a shrug. */
+    var onPhone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
     S.gerr = 'Signing in with Google worked' + (saw ? ', as <b>' + esc(saw) + '</b>' : '') +
-             ' &mdash; what follows is the Hub\'s own server. ' + reachErr(e, 'complete the sign-in');
+             ' &mdash; what follows is the Hub\'s own server. ' +
+             reachErr(e, 'complete the sign-in') +
+             (onPhone
+               ? '<br><br><b>On a phone, this is a known fault and retrying will not help.</b> ' +
+                 'Use the committee password below &mdash; it works on this device. ' +
+                 'Google sign-in is reliable on a laptop.'
+               : '');
     forgetGoogleChoice();
     render();
   });
@@ -1185,33 +1210,35 @@ function signIn(){
    is for. Without it, every sign-in would flash three failure messages that
    then quietly corrected themselves. */
 function loadAll(){
-  return api('hubSnapshot', { token: TOKEN }).then(function(res){
-    if (!res || !res.ok) throw new Error((res&&res.error) || 'The snapshot could not be read.');
-    S.snap = res;
-    startBackgroundReads();
+  return api('hubAll', { token: TOKEN }).then(function(res){
+    if (!res || !res.ok) throw new Error((res && res.error) || 'The snapshot could not be read.');
+    S.snap = res.snapshot;
+    /* Each part is judged on its own, exactly as when they were three separate
+       calls — a broken detention tab must not cost you the menu. */
+    S.det   = (res.detention && res.detention.ok) ? res.detention : null;
+    S.early = (res.early && res.early.ok) ? res.early : null;
+    S.pending = { det:false, early:false, groom:false };
   });
 }
 
-function loadDetention(){
-  return api('hubDetention', { token: TOKEN }).then(function(d){
-    S.det = (d && d.ok) ? d : null;        // null = "we do not know what is booked"
-  }).catch(function(){ S.det = null; });
+/* ── GROOMING IS FETCHED WHEN YOU OPEN IT, NOT AT SIGN-IN ─────────────────
+   It opens a second spreadsheet, which makes it the slowest read in the
+   system, and it fills one menu row that most sign-ins never look at. Moving
+   it off the sign-in path makes signing in faster AND removes a whole class of
+   failure from it.
+
+   The cost, stated plainly: the menu's grooming row now shows "not read yet"
+   until you open the area once. That is a fair trade for a sign-in that works
+   — and it is honest, which "0" would not have been. */
+function ensureGrooming(){
+  if (S.groom || S.pending.groom) return Promise.resolve();
+  S.pending.groom = true;
+  return loadGrooming().then(function(){
+    S.pending.groom = false;
+    if (TOKEN && S.view !== 'signin') render();
+  });
 }
 
-function startBackgroundReads(){
-  S.pending = { det: true, early: true, groom: true };
-  function settle(key){
-    return function(){
-      S.pending[key] = false;
-      /* Guarded on the token: a read still in flight when somebody signs out
-         must not redraw a signed-in screen behind the sign-in page. */
-      if (TOKEN && S.view !== 'signin') render();
-    };
-  }
-  loadDetention().then(settle('det'));
-  loadEarly().then(settle('early'));
-  loadGrooming().then(settle('groom'));
-}
 
 /* THESE TWO ARE LIVE, AND THAT IS THE WHOLE DIFFERENCE. Every other count on
    the menu comes from 📸 Snapshot, which the trigger rebuilds every ten minutes
@@ -1231,6 +1258,7 @@ function loadEarly(){
 }
 
 function loadGrooming(){
+  S.groomTried = true;
   return api('hubGrooming', { token: TOKEN }).then(function(r){
     /* ok:true with connected:false is KEPT, not discarded. It carries the
        sentence explaining that the tracker has not been connected, and that
@@ -1251,7 +1279,7 @@ function signOut(){
      account — which on a shared laptop is the opposite of signing out. */
   try { if (typeof google !== 'undefined' && google.accounts && google.accounts.id)
           google.accounts.id.disableAutoSelect(); } catch(e){}
-  S.gstu=null; S.gLoading=false;
+  S.gstu=null; S.gLoading=false; S.groomTried=false;
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   render(true);
@@ -1401,6 +1429,13 @@ function menuHtml(){
   if (S.pending.groom){
     rows += '<div class="mrow" data-area="__groom"><div class="mt">Grooming and attire' +
       '<em>reading the grooming tracker&hellip;</em></div></div>';
+  } else if (S.groom === null && !S.groomTried){
+    /* NOT READ YET is a third state, and it is not a failure. Grooming moved
+       off the sign-in path on 4 August so that a slow second spreadsheet could
+       not cost you the whole menu. Saying "0" here would be a lie; saying
+       "could not be read" would be a different one. */
+    rows += '<div class="mrow" data-area="__groom"><div class="mt">Grooming and attire' +
+      '<em>open to read the grooming tracker</em></div></div>';
   } else if (!S.groom){
     rows += '<div class="mrow" data-area="__groom"><div class="mt">Grooming and attire' +
       '<em>the grooming tracker could not be read &mdash; open it for the reason</em></div></div>';
@@ -2523,6 +2558,7 @@ function groomKpiHtml(d){
 }
 
 function groomHtml(){
+  if (!S.groomTried && !S.pending.groom){ ensureGrooming(); return readingHtml('the grooming tracker'); }
   if (S.pending.groom) return readingHtml('the grooming tracker');
   if (!S.groom){
     return '<div class="screen centre"><div class="wrap">' +
@@ -3305,7 +3341,7 @@ function wire(){
     if (area){
       var key = area.getAttribute('data-area');
       if (key === '__early'){ go('early'); return; }
-      if (key === '__groom'){ go('groom'); return; }
+      if (key === '__groom'){ ensureGrooming(); go('groom'); return; }
       var a = areaOf(key);
       if (a && a.built) openArea(key); else go('soon');
       return;

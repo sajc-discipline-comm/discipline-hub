@@ -665,6 +665,28 @@ function esc(s){ return String(s===null||s===undefined?'':s)
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 /* ── transport ────────────────────────────────────────────────────────── */
+/* ── THE FIFTH TIME THIS PROJECT HAS BEEN BITTEN BY THE SAME SHAPE ────────
+   `r.json()` rejects for TWO completely different reasons, and the old code
+   let both fall into one .catch():
+
+     1. the request never got there                — a network fault
+     2. it got there and came back unreadable      — the server threw, and
+                                                     Apps Script answered with
+                                                     an HTML error page
+
+   Those need opposite actions, and reporting the second as the first is how
+   an afternoon gets lost: "could not reach the server — nothing was sent" is
+   a flat lie when the Executions log shows doPost ran to completion.
+
+   The same mistake, previously: the green slip confirm page saying "nothing
+   has been recorded" while recording it; `ok:true` with an empty map; a
+   MailApp send that returned for a message nobody received; and the Hub's own
+   sign-in reporting a refused snapshot as an unreachable server.
+
+   So the body is read as TEXT first and parsed here, and a parse failure
+   throws an error the callers can tell apart. A lost or unreadable reply is
+   not evidence about what the server did, and nothing in this page may claim
+   otherwise. */
 function api(action, body){
   if (window.__mockApi) return window.__mockApi(action, body);
   var payload = body || {};
@@ -672,7 +694,36 @@ function api(action, body){
   return fetch(GAS_URL, {
     method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify(payload), redirect:'follow'
-  }).then(function(r){ return r.json(); });
+  }).then(function(r){
+    return r.text().then(function(txt){
+      try { return JSON.parse(txt); }
+      catch (e) {
+        var err = new Error('badReply');
+        err.badReply = true;
+        err.status = r.status;
+        /* Apps Script's error pages say what went wrong in the first line or
+           two of the body. Keeping a short slice of it turns "something broke"
+           into something somebody can act on or send to me. */
+        err.snippet = String(txt || '').replace(/<[^>]*>/g, ' ')
+                        .replace(/\s+/g, ' ').trim().slice(0, 240);
+        throw err;
+      }
+    });
+  });
+}
+
+/* One sentence for a failed call, saying which of the two things happened.
+   `what` names the thing being attempted, e.g. 'complete the sign-in'. */
+function reachErr(e, what){
+  if (e && e.badReply){
+    return 'The server received the request to ' + what + ' and answered with something ' +
+           'this page could not read &mdash; which usually means the Apps Script project ' +
+           'threw an error rather than that anything is wrong with your connection. ' +
+           'IT MAY HAVE WORKED: check before trying again. ' +
+           (e.snippet ? '<br><br>Google said: <i>' + esc(e.snippet) + '</i>' : '');
+  }
+  return 'Could not reach the server at ' + GAS_URL + ' to ' + what + '. Nothing was sent. ' +
+         'Either the connection is down, or the deployment at that address no longer exists.';
 }
 
 /* ── the snapshot, read by NAME ───────────────────────────────────────── */
@@ -935,10 +986,10 @@ function onGoogleCredential(resp){
     return loadAll().then(function(){
       S.busy = false; S.view = 'menu'; render(true);
     });
-  }).catch(function(){
+  }).catch(function(e){
     S.busy = false;
-    S.gerr = 'Could not reach the server at ' + GAS_URL + ' to complete the sign-in. ' +
-             'The sign-in with Google itself worked — this is the Hub\'s own server.';
+    S.gerr = 'Signing in with Google worked &mdash; this is the Hub\'s own server. ' +
+             reachErr(e, 'complete the sign-in');
     render();
   });
 }
@@ -960,16 +1011,23 @@ function signIn(){
     return loadAll().then(function(){
       S.busy = false; S.view = 'menu'; render(true);
     });
-  }).catch(function(){
+  }).catch(function(e){
     S.busy = false;
-    /* NAME THE ADDRESS THAT FAILED. "Could not reach the server" is true and
-       useless: the three real causes need three different actions, and two of
-       them are invisible unless the URL is on screen. */
-    S.err = 'Could not reach the server at ' + GAS_URL + ' — nothing was sent. ' +
-            'Three things cause this: the deployment at that address no longer exists ' +
-            '(check Deploy → Manage deployments — a NEW deployment issues a different ' +
-            '/exec and leaves this one stranded); the page is being opened straight from ' +
-            'your disk rather than from its web address; or the connection is down.';
+    /* THIS CATCH ALSO SWALLOWS loadAll()'s THROW. loadAll deliberately throws
+       when the snapshot comes back ok:false — a server that answered clearly
+       and said no. Reporting that as an unreachable server is the same lie
+       this whole block exists to stop telling, so a plain Error with a message
+       is shown as itself. */
+    if (e && !e.badReply && e.message && e.message !== 'Failed to fetch'){
+      S.err = esc(e.message);
+    } else {
+      S.err = reachErr(e, 'sign in') +
+        (e && e.badReply ? '' :
+          ' Three things cause this: the deployment at that address no longer exists ' +
+          '(check Deploy → Manage deployments — a NEW deployment issues a different ' +
+          '/exec and leaves this one stranded); the page is being opened straight from ' +
+          'your disk rather than from its web address; or the connection is down.');
+    }
     render();
   });
 }

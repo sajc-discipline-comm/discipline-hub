@@ -643,6 +643,10 @@ var S = {
      opens — never on the menu read, which the sign-in waits behind. */
   gstu:null, gLoading:false,
   gerr:'',              // a failed Google sign-in, shown under its own button
+  /* The verified address from a Google sign-in. Blank on the password path —
+     which is itself the useful signal, since it means nobody can say WHO is
+     signed in, only that they knew the password. */
+  email:'',
 
   teachers:null,        // hubTeachers, IN MEMORY ONLY
   area:'', tab:'follow',
@@ -698,8 +702,16 @@ function esc(s){ return String(s===null||s===undefined?'':s)
    an error message, because nobody would ever notice it. When a write's reply
    goes missing the honest answer is "it may have worked, go and look", which
    is exactly what the message says. */
+/* The NUMBER is how many EXTRA attempts, not how many total.
+   SIGN-INS GET TWO, everything else one, and the difference is what failure
+   costs. A read that gives up shows a stale panel and a Try again button. A
+   sign-in that gives up is a locked door — and the lost-reply fault is worst
+   exactly where it hurts most: on a phone, which is where several Google
+   sessions are most likely to be live and where Kim hit it on 4 August with
+   one retry already in place. Sign-ins change nothing, so three attempts are
+   as safe as one. */
 var RETRY_SAFE = {
-  hubLogin:1, goLogin:1, gateLogin:1, hubGoogleLogin:1,
+  hubLogin:2, goLogin:2, gateLogin:2, hubGoogleLogin:2,
   hubSnapshot:1, hubDetention:1, hubEarly:1, hubLive:1, hubHistory:1,
   hubTeachers:1, hubGrooming:1, hubGroomingStudent:1, bootstrap:1, refresh:1
 };
@@ -757,11 +769,19 @@ function api(action, body){
   if (window.__mockApi) return window.__mockApi(action, body);
   var payload = body || {};
   payload.action = action;
-  return apiOnce(action, payload).catch(function(e){
-    if (!e || !e.badReply || !RETRY_SAFE[action]) throw e;
-    return new Promise(function(res){ setTimeout(res, 600); })
-      .then(function(){ return apiOnce(action, payload); });
-  });
+  var left = RETRY_SAFE[action] || 0;
+
+  function attempt(){
+    return apiOnce(action, payload).catch(function(e){
+      if (!e || !e.badReply || left <= 0) throw e;
+      left--;
+      /* Backing off rather than firing straight back. The fault is Google
+         losing a reply, and a second identical request in the same instant is
+         more likely to land in the same hole than a moment later. */
+      return new Promise(function(res){ setTimeout(res, 700); }).then(attempt);
+    });
+  }
+  return attempt();
 }
 
 /* One sentence for a failed call, saying which of the two things happened.
@@ -1018,9 +1038,17 @@ function paintGoogle(){
     auto_select: false,
     cancel_on_tap_outside: true
   });
+  /* text:'signin_with' is what makes it read "Sign in with Google" rather
+     than "Sign in as —". Together with disableAutoSelect() above and never
+     passing a login_hint, Google has nothing to personalise the BUTTON from.
+     What this cannot control is Google's own account-chooser POPUP, which
+     lists the accounts the browser is signed into and puts the most recent
+     first — that window belongs to Google and no site can restyle or reorder
+     it, which is the point of it. */
   google.accounts.id.renderButton(host, {
     theme: 'outline', size: 'large', width: 320,
-    text: 'signin_with', shape: 'rectangular'
+    text: 'signin_with', shape: 'rectangular',
+    type: 'standard', logo_alignment: 'left'
   });
 }
 
@@ -1080,6 +1108,7 @@ function onGoogleCredential(resp){
     TOKEN = res.token;
     /* THE NAME COMES FROM THE ACCESS TAB, not from anything typed here. */
     S.user = res.name || res.email;
+    S.email = res.email || '';        // the VERIFIED address, for the header
     return loadAll().then(function(){
       S.busy = false; S.view = 'menu'; render(true);
     });
@@ -1214,7 +1243,7 @@ function loadGrooming(){
 
 function signOut(){
   TOKEN=null; S.teachers=null;
-  S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user='';
+  S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user=''; S.email='';
   S.early=null; S.groom=null; S.etab='term'; S.gtab='students'; S.from='';
   S.pending={ det:false, early:false, groom:false }; S.gerr='';
   /* Tell Google to forget the automatic-selection preference too. Without
@@ -1278,13 +1307,6 @@ function signinHtml(){
     '<div class="date">' + esc(todayLong()) + '</div>' +
     '<h1 class="big">SAJC Discipline Committee Hub</h1>' +
     '<div class="gap"></div>' +
-    /* The typed name is only for the PASSWORD path. A Google sign-in takes
-       the name from the 👥 Access tab instead, which is why it stops being
-       something anybody can type as a colleague. */
-    '<div class="field"><label>Your name</label>' +
-      '<input id="nm" autocomplete="name" value="' + esc(S.name || S.user) + '">' +
-      (GOOGLE_CLIENT_ID ? '<div class="hintx">Only needed for the password sign-in &mdash; ' +
-        'a Google sign-in uses the name on the access list.</div>' : '') + '</div>' +
     /* ── GOOGLE FIRST, PASSWORD BENEATH ───────────────────────────────
        Both are shown while the change beds in. The password is the fallback
        for the week after switching over, so that a problem with Google
@@ -1309,6 +1331,15 @@ function signinHtml(){
           '<div class="gor"><span>or use the committee password</span></div>' +
         '</div>'
       : '') +
+    /* THE NAME AND PASSWORD NOW SIT BELOW GOOGLE, in that order, because that
+       is the order somebody uses them in. The name field between the heading
+       and the Google button implied it was needed for both; it is needed only
+       for the password path, and a field you must skip past to reach the thing
+       you actually wanted is a field in the way. */
+    '<div class="field"><label>Your name</label>' +
+      '<input id="nm" autocomplete="name" value="' + esc(S.name || S.user) + '">' +
+      (GOOGLE_CLIENT_ID ? '<div class="hintx">Only for the password sign-in below &mdash; ' +
+        'a Google sign-in takes your name from the access list.</div>' : '') + '</div>' +
     '<div class="field pw"><label>Committee password</label>' +
       '<input type="password" id="pw" autocomplete="current-password" autocapitalize="off" spellcheck="false">' +
       '<button type="button" class="peek" id="peek" aria-label="Show the password" title="Show the password">' +
@@ -1407,7 +1438,14 @@ function menuHtml(){
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="date">' + esc(todayLong()) + ' ' + builtHtml() + '</div>' +
     '<h1>SAJC Discipline Committee Hub</h1>' +
-    '<div class="who">Signed in as ' + esc(S.user) + '.</div>' +
+    /* THE EMAIL, NOT JUST THE NAME. On a machine signed into more than one
+       Google account the question that actually matters is WHICH account is
+       driving this screen — and a first name cannot answer it. Where there is
+       no email, the password path was used, and saying so is honest: the
+       system knows somebody knew the password and nothing more. */
+    '<div class="who">Signed in as ' + esc(S.user) +
+      (S.email ? ' &middot; <b>' + esc(S.email) + '</b>' :
+                 ' &middot; <i>committee password</i>') + '</div>' +
     '<div class="mrows">' + rows + '</div>' + tools +
     '<div class="foot"><span>Counts come from the snapshot, which rebuilds hourly &mdash; ' +
     'except early dismissal follow-up, which is read live every time this page loads. ' +

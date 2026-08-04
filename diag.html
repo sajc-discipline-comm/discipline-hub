@@ -90,7 +90,7 @@ function probe(padTo){
       var parsed = null, isJson = false;
       try { parsed = JSON.parse(txt); isJson = true; } catch(e){}
       return { ok:isJson, ms:ms, status:r.status, type:r.headers.get('content-type')||'(none)',
-               len:txt.length, body:txt.slice(0,400),
+               len:txt.length, body:txt.slice(0,1200),
                expected: isJson && parsed && parsed.error === 'Wrong password.' };
     });
   }).catch(function(e){
@@ -102,13 +102,15 @@ function run(label, n, padTo, pairs){
   var btns = document.querySelectorAll('button');
   for (var i=0;i<btns.length;i++) btns[i].disabled = true;
   var c = card('<b>' + label + '</b>Running&hellip;');
-  var good = 0, bad = 0, worst = null, times = [];
+  var good = 0, bad = 0, worst = null, times = [], kinds = {};
 
   function step(i){
     if (i >= n){
       var line = '<b>' + label + '</b>' +
         '<span class="' + (bad ? 'bad' : 'ok') + '">' + good + ' good, ' + bad + ' failed</span>' +
         ' &middot; ' + Math.min.apply(null,times) + '&ndash;' + Math.max.apply(null,times) + 'ms';
+      var ks = Object.keys(kinds);
+      if (ks.length) line += '<br>' + ks.map(function(k){ return kinds[k] + ' &times; ' + k; }).join('<br>');
       if (worst){
         line += '<pre>' + (worst.network
           ? 'NETWORK FAILURE — the request did not complete.\n' + worst.err
@@ -124,7 +126,18 @@ function run(label, n, padTo, pairs){
     Promise.all(jobs).then(function(rs){
       rs.forEach(function(r){
         times.push(r.ms);
-        if (r.expected) good++; else { bad++; if (!worst) worst = r; }
+        if (r.expected) good++;
+        else {
+          bad++;
+          /* COUNT THE KINDS, not just the first. Two different faults were
+             seen on 4 August — an HTTP 404 from the redirect target, and a
+             fetch that never completed — and knowing the mix matters more than
+             seeing one example of whichever happened first. */
+          var kind = r.network ? 'network failure (did not complete)'
+                               : 'HTTP ' + r.status + ' ' + (r.type||'').split(';')[0];
+          kinds[kind] = (kinds[kind] || 0) + 1;
+          if (!worst) worst = r;
+        }
       });
       c.innerHTML = '<b>' + label + '</b>' + (good+bad) + ' done, ' + bad + ' failed&hellip;';
       setTimeout(function(){ step(i+1); }, 250);

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SAJC — connection test</title>
+<!--
+  A THROWAWAY DIAGNOSTIC, 4 August 2026.
+  ==========================================================================
+  Built because five theories about one error had produced no evidence, and
+  guessing again would have been worse than measuring.
+
+  WHAT IT DOES. Sends deliberately harmless requests to the same /exec the
+  four real pages use, and shows the RAW reply — status, content type, and the
+  first part of the body — instead of trying to parse it. When a reply comes
+  back unreadable, this is the page that says what it actually was.
+
+  NOTHING IT SENDS CAN CHANGE ANYTHING. Every test uses hubLogin with a
+  deliberately wrong password. The expected answer is {"ok":false,"error":
+  "Wrong password."} — a small, fast, side-effect-free reply from the same
+  route_ every real request goes through. No token, no student data, no write
+  path. Running it a hundred times changes nothing.
+
+  WHY IT ASKS ABOUT SIZE. One difference between a Google sign-in and every
+  other request in this system is the size of what is sent: an ID token is
+  roughly 1,200 characters, where a password login is about 60. Test 2 pads
+  the body to a similar size to see whether size is what matters.
+
+  DELETE THIS FILE once the question is settled. A page that talks to the API
+  and is not part of the system is exactly the kind of thing that gets found
+  in two years and nobody knows what it is.
+  ==========================================================================
+-->
+<style>
+:root{--accent:#27326a;--paper:#f7f5f1;--ink:#1b1e2b;--muted:#6e7180;
+  --good:#2f6b4f;--bad:#9d372e;--line:#e4ded4;--raised:#fffdfa}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:var(--paper);color:var(--ink);
+  font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:21px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:14px;margin:0 0 20px}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;background:var(--accent);
+  color:#fff;padding:15px 18px;width:100%;margin-bottom:10px;cursor:pointer}
+button:disabled{background:#cfcabf}
+button.alt{background:#fff;color:var(--accent);border:1.5px solid var(--accent)}
+.card{background:var(--raised);border:1px solid var(--line);border-radius:10px;
+  padding:13px 15px;margin-bottom:10px;font-size:14px}
+.card b{display:block;margin-bottom:5px}
+.ok{color:var(--good)} .bad{color:var(--bad)}
+pre{white-space:pre-wrap;word-break:break-all;background:#f0eeea;padding:10px;
+  border-radius:7px;font-size:12px;margin:8px 0 0;max-height:230px;overflow:auto}
+.env{font-size:12px;color:var(--muted);margin-top:22px;word-break:break-all}
+</style>
+</head>
+<body>
+
+<h1>SAJC connection test</h1>
+<p class="sub">Sends harmless requests to the same server the Hub uses, and shows exactly
+what comes back. Nothing it sends can change any record.</p>
+
+<button id="t1">1 · Small request &times;10</button>
+<button id="t2" class="alt">2 · Large request &times;10 <span style="font-weight:400">(the size of a Google sign-in)</span></button>
+<button id="t3" class="alt">3 · Two at once &times;5 <span style="font-weight:400">(like the Hub does)</span></button>
+
+<div id="out"></div>
+<div class="env" id="env"></div>
+
+<script>
+var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3ZySAGT4LHV-R4KfB00PGdXL8fu569vrvvUUpzxF8nrhyIw/exec';
+
+var out = document.getElementById('out');
+document.getElementById('env').textContent =
+  'Device: ' + navigator.userAgent + '\nAddress: ' + location.href;
+
+function card(html){ var d=document.createElement('div'); d.className='card';
+  d.innerHTML=html; out.insertBefore(d, out.firstChild); return d; }
+
+/* ONE ATTEMPT, REPORTED WHOLE. No retry, no parsing that could hide what came
+   back — the entire point is to see the reply that the real pages throw away. */
+function probe(padTo){
+  var body = { action:'hubLogin', password:'deliberately-wrong-'+Date.now() };
+  if (padTo) body.filler = new Array(padTo).join('x');   // same shape, bigger
+  var started = Date.now();
+  return fetch(GAS_URL, {
+    method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify(body), redirect:'follow', credentials:'omit', cache:'no-store'
+  }).then(function(r){
+    return r.text().then(function(txt){
+      var ms = Date.now() - started;
+      var parsed = null, isJson = false;
+      try { parsed = JSON.parse(txt); isJson = true; } catch(e){}
+      return { ok:isJson, ms:ms, status:r.status, type:r.headers.get('content-type')||'(none)',
+               len:txt.length, body:txt.slice(0,400),
+               expected: isJson && parsed && parsed.error === 'Wrong password.' };
+    });
+  }).catch(function(e){
+    return { ok:false, network:true, ms:Date.now()-started, err:String(e && e.message || e) };
+  });
+}
+
+function run(label, n, padTo, pairs){
+  var btns = document.querySelectorAll('button');
+  for (var i=0;i<btns.length;i++) btns[i].disabled = true;
+  var c = card('<b>' + label + '</b>Running&hellip;');
+  var good = 0, bad = 0, worst = null, times = [];
+
+  function step(i){
+    if (i >= n){
+      var line = '<b>' + label + '</b>' +
+        '<span class="' + (bad ? 'bad' : 'ok') + '">' + good + ' good, ' + bad + ' failed</span>' +
+        ' &middot; ' + Math.min.apply(null,times) + '&ndash;' + Math.max.apply(null,times) + 'ms';
+      if (worst){
+        line += '<pre>' + (worst.network
+          ? 'NETWORK FAILURE — the request did not complete.\n' + worst.err
+          : 'HTTP ' + worst.status + '   type: ' + worst.type + '   ' + worst.len + ' chars\n\n'
+            + worst.body.replace(/[<>&]/g, function(m){
+                return {'<':'&lt;','>':'&gt;','&':'&amp;'}[m]; })) + '</pre>';
+      }
+      c.innerHTML = line;
+      for (var k=0;k<btns.length;k++) btns[k].disabled = false;
+      return;
+    }
+    var jobs = pairs ? [probe(padTo), probe(padTo)] : [probe(padTo)];
+    Promise.all(jobs).then(function(rs){
+      rs.forEach(function(r){
+        times.push(r.ms);
+        if (r.expected) good++; else { bad++; if (!worst) worst = r; }
+      });
+      c.innerHTML = '<b>' + label + '</b>' + (good+bad) + ' done, ' + bad + ' failed&hellip;';
+      setTimeout(function(){ step(i+1); }, 250);
+    });
+  }
+  step(0);
+}
+
+document.getElementById('t1').onclick = function(){ run('Test 1 · small', 10, 0, false); };
+document.getElementById('t2').onclick = function(){ run('Test 2 · large (~1.4KB)', 10, 1400, false); };
+document.getElementById('t3').onclick = function(){ run('Test 3 · two at once', 5, 0, true); };
+</script>
+</body>
+</html>

@@ -1649,8 +1649,18 @@ function openStudent(entryId){
      broken page rather than a page that is working. */
   S.hLoading = true;
   go('student');
-  loadHistory(x.id);
-  loadGroomingStudent({ id: x.id, name: x.name, cls: x.cls });
+  /* ── ONE AT A TIME, NOT BOTH AT ONCE ─────────────────────────────────
+     These two used to fire together. Measured on 4 August: requests to this
+     deployment succeed 100% of the time when nothing else is talking to it,
+     and start failing as soon as anything is — 93% with two devices, 80% with
+     two devices both running pairs. Concurrency is the fault, not the device
+     and not the network.
+     So the grooming read waits for the history read. It costs a second on a
+     screen nobody is racing through, and it removes the last place in the Hub
+     where two requests are deliberately in flight at once. */
+  loadHistory(x.id).then(function(){
+    loadGroomingStudent({ id: x.id, name: x.name, cls: x.cls });
+  });
 }
 
 /* Every snapshot row for this student, worst ladder first. */
@@ -1679,9 +1689,13 @@ function loadGroomingStudent(x){
     });
 }
 
+/* RETURNS ITS PROMISE, so the grooming read can wait for it — see openStudent.
+   It did not, and the first version of that chain called .then() on undefined
+   and threw. Caught by the test harness rather than by Kim, which is the whole
+   argument for having one. */
 function loadHistory(id){
   S.hLoading = true;
-  api('hubHistory', { token: TOKEN, studentId: id }).then(function(res){
+  return api('hubHistory', { token: TOKEN, studentId: id }).then(function(res){
     S.hLoading = false;
     if (!res || !res.ok){ S.hErr = (res && res.error) || 'The history could not be read.'; render(); return; }
     S.history = res; render();
@@ -2463,8 +2477,18 @@ function openStudentFromEarly(studentId){
   S.from = 'early';
   S.hLoading = true;
   go('student');
-  loadHistory(rec.studentId);
-  loadGroomingStudent({ id: rec.studentId, name: rec.name, cls: rec.cls });
+  /* ── ONE AT A TIME, NOT BOTH AT ONCE ─────────────────────────────────
+     These two used to fire together. Measured on 4 August: requests to this
+     deployment succeed 100% of the time when nothing else is talking to it,
+     and start failing as soon as anything is — 93% with two devices, 80% with
+     two devices both running pairs. Concurrency is the fault, not the device
+     and not the network.
+     So the grooming read waits for the history read. It costs a second on a
+     screen nobody is racing through, and it removes the last place in the Hub
+     where two requests are deliberately in flight at once. */
+  loadHistory(rec.studentId).then(function(){
+    loadGroomingStudent({ id: rec.studentId, name: rec.name, cls: rec.cls });
+  });
 }
 
 

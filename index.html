@@ -949,8 +949,15 @@ function domainsIn(key){
 }
 
 /* ── dates and text ───────────────────────────────────────────────────── */
-var MONTHS=['January','February','March','April','May','June','July','August',
-            'September','October','November','December'];
+/* MONTH_LONG, NOT MONTHS. Until 4 August 2026 this was called MONTHS, and so
+   was the SHORT list further down the same script — 'Jan', 'Feb', 'Mar' — used
+   for the year chart's twelve columns. Two `var MONTHS` in one scope is not an
+   error in JavaScript; the second simply wins at load. So longish() and
+   todayLong() below, both written to print a full month name, had been
+   printing 'Wednesday 29 Jul' and '4 Aug 2026' instead. Silently, since both
+   lists are twelve strings long and both index the same way. */
+var MONTH_LONG=['January','February','March','April','May','June','July','August',
+                'September','October','November','December'];
 var DAYNAME={sun:'Sunday',mon:'Monday',tue:'Tuesday',wed:'Wednesday',thu:'Thursday',fri:'Friday',sat:'Saturday'};
 
 /* '29 Jul 2026 (Wed)' → 'Wednesday 29 July'. */
@@ -961,12 +968,12 @@ function longish(stamp){
              .indexOf(m[2].toLowerCase());
   var dow = DAYNAME[m[4].toLowerCase()];
   if (mi < 0 || !dow) return String(stamp);
-  return dow + ' ' + Number(m[1]) + ' ' + MONTHS[mi];
+  return dow + ' ' + Number(m[1]) + ' ' + MONTH_LONG[mi];
 }
 function todayLong(){
   var d = new Date();
   return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()] +
-         ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+         ', ' + d.getDate() + ' ' + MONTH_LONG[d.getMonth()] + ' ' + d.getFullYear();
 }
 /* '02 Jul 2026 · 09 Jul 2026 · 29 Jul 2026' → '02 Jul · 09 Jul · 29 Jul'.
    The year is the same on every row of the email and the column is the widest
@@ -1804,6 +1811,9 @@ var STATUS_HUE = {
    colour that already means something else. */
 function hueFor(code){ return STATUS_HUE[String(code||'').trim()] || '#8d8a83'; }
 
+/* The chart's twelve columns. Short forms deliberately — these are axis
+   labels, and there is no room for 'September'. The long-form list is
+   MONTH_LONG, near the top of this script; the two must not share a name. */
 var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function monthOf(d){ var m = /^\d{1,2}\s+([A-Za-z]{3})/.exec(String(d||'')); return m ? m[1] : ''; }
 

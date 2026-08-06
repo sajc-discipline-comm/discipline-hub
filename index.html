@@ -614,7 +614,7 @@ var TOKEN = null;
 var S = {
   view:'signin', user:'', name:'', busy:false, err:'',
   snap:null,            // hubSnapshot's reply, whole
-  det:null,             // hubDetention's reply, or null
+  det:null,             // the detention part of hubAll's reply, or null
   /* hubEarly's reply, or null. NULL MEANS "COULD NOT READ", NEVER "NONE" —
      the menu must be able to say which, because an unreadable record and an
      empty one look identical and mean opposite things. */
@@ -636,7 +636,7 @@ var S = {
 
   /* Which background reads are still in flight. A row that has not arrived says
      "reading", not "could not be read" — null cannot tell those apart. */
-  pending:{ det:false, early:false, groom:false },
+  pending:{ early:false, groom:false },
 
   /* The open student's grooming record, and whether it is still coming. It
      lives in a different spreadsheet and is fetched only when a student page
@@ -770,9 +770,14 @@ function apiOnce(action, payload){
    merely made the browser hold more Google sessions, which made a rare fault
    frequent enough to find.
 
-   A fresh POST gets a fresh redirect target, so one retry clears it. One, not
-   three: if the second also comes back unreadable the fault is something else,
-   and hammering a server that may be struggling is not a diagnosis. */
+   A fresh POST gets a fresh redirect target, so retrying clears it. This
+   paragraph said "one retry. One, not three" until 4 August 2026, and the
+   reasoning behind that — hammering a server that may be struggling is not a
+   diagnosis — was sound while the fault was unexplained. It stopped applying
+   the moment the fault WAS explained. The cause is collision between requests,
+   not a struggling server, and the answer to collision is to back off and try
+   again rather than to give up after one go. RETRY_SAFE grants three, with a
+   growing jittered wait; the comment above it records why. */
 function api(action, body){
   if (window.__mockApi) return window.__mockApi(action, body);
   var payload = body || {};
@@ -862,7 +867,13 @@ function allRows(){
 function isHeld(x){ return /held/i.test(x.state); }
 function isStamped(x){ return !!S.stamped[x.entryId]; }
 
-/* ── the six menu areas ───────────────────────────────────────────────── */
+/* ── the four worklist areas ──────────────────────────────────────────── */
+/* NOT "the six menu areas", which is what this said until 4 August 2026. The
+   menu shows six rows, but only these four are worklists built from the
+   snapshot; Early dismissals and Grooming are live reads with their own
+   loaders and no entry here. Counting one thing and naming another is how a
+   reader ends up looking for two array entries that were never meant to
+   exist. */
 /* Domains, not people. 'Thursday privilege' folds into its cohort's
    latecoming worklist — it is one rule and the same person's job, not a
    ladder anybody works through. */
@@ -1203,22 +1214,23 @@ function signIn(){
    in the code, because a chain of .then() looks the same whether the calls
    are quick or slow.
 
-   THREE OF THE FOUR ARE NOT WORTH WAITING FOR. Only the snapshot is load-
-   bearing: every latecoming and attendance figure comes from it, and there is
-   no menu without it. Detention, early dismissal and grooming each fill in one
-   menu row. So the snapshot is awaited and the other three are fired at the
-   same moment as each other, each re-drawing its own row as it lands. Sign-in
-   is now as slow as the snapshot alone, which is as fast as it can honestly be.
+   THEN 4 AUGUST CHANGED THE ANSWER AGAIN, and this paragraph is the second
+   version of it. Firing three reads at once was the right shape while the
+   constraint was thought to be TIME. It was not: concurrent requests to this
+   deployment break each other's redirect ticket, so three simultaneous reads
+   were three chances to lose one. The fix went the other way — snapshot,
+   detention and early dismissal are now ONE request, `hubAll`, which the
+   server assembles and returns whole. Grooming, the slowest because it opens
+   a second spreadsheet, is not fetched at sign-in at all; it waits until you
+   open the area. A sign-in is two requests rather than five.
 
-   THEY ARE NOT AWAITED TOGETHER EITHER. Promise.all would have made the menu
-   wait for grooming — the slowest, because of the second spreadsheet — before
-   showing detention, which may have arrived two seconds earlier. Each lands on
-   its own.
-
-   A ROW THAT HAS NOT ARRIVED SAYS "reading", NOT "could not be read". Those
-   are opposite facts and null cannot tell them apart, which is what S.pending
-   is for. Without it, every sign-in would flash three failure messages that
-   then quietly corrected themselves. */
+   WHAT SURVIVED FROM THE FIRST VERSION: each part of hubAll's reply is still
+   judged on its own, so a broken detention tab costs you that row and not the
+   menu. And a row that has not arrived still says "reading", never "could not
+   be read" — those are opposite facts and null cannot tell them apart, which
+   is what S.pending is for. It now tracks only the two reads that can still
+   be outstanding after sign-in: early dismissals when you refresh that area,
+   and grooming until you first open it. */
 function loadAll(){
   return api('hubAll', { token: TOKEN }).then(function(res){
     if (!res || !res.ok) throw new Error((res && res.error) || 'The snapshot could not be read.');
@@ -1227,7 +1239,11 @@ function loadAll(){
        calls — a broken detention tab must not cost you the menu. */
     S.det   = (res.detention && res.detention.ok) ? res.detention : null;
     S.early = (res.early && res.early.ok) ? res.early : null;
-    S.pending = { det:false, early:false, groom:false };
+    /* No `det` key: detention arrives with this same reply, so there is never
+       a moment where it is outstanding. It was initialised here and reset on
+       sign-out but never set true and never read — a leftover from when
+       detention was its own call. Removed 4 August 2026. */
+    S.pending = { early:false, groom:false };
   });
 }
 
@@ -1283,7 +1299,7 @@ function signOut(){
   TOKEN=null; S.teachers=null;
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user=''; S.email='';
   S.early=null; S.groom=null; S.etab='term'; S.gtab='students'; S.from='';
-  S.pending={ det:false, early:false, groom:false }; S.gerr='';
+  S.pending={ early:false, groom:false }; S.gerr='';
   /* Tell Google to forget the automatic-selection preference too. Without
      this, signing out of the Hub and signing back in silently reuses the same
      account — which on a shared laptop is the opposite of signing out. */
@@ -1332,10 +1348,11 @@ function render(moved){
   S.first = false;
 }
 
-function screenOpen(cls){
-  return '<div class="screen' + (S.first?'':(moveless?'':'')) + (cls?' '+cls:'') + '">';
-}
-var moveless = false;
+/* screenOpen() and its `moveless` flag were removed on 4 August 2026. Nothing
+   called it; render() builds every screen inline. Both branches of its ternary
+   returned the empty string, and `moveless` was declared after the function
+   that read it and never set true — so it had no effect even if something had
+   called it. */
 
 function signinHtml(){
   /* THE SIGN-IN SCREEN ANIMATES ONCE. Going busy is a change of button label,
@@ -1394,7 +1411,9 @@ function signinHtml(){
 }
 
 function menuHtml(){
-  function big(v, l, zero){
+  /* Took a third `zero` argument until 4 August 2026 and never read it — the
+     zero styling comes from `v` itself. */
+  function big(v, l){
     return '<div class="mnum' + (v ? '' : ' zero') + '"><b>' + v + '</b><span>' + l + '</span></div>';
   }
 
@@ -1492,8 +1511,16 @@ function menuHtml(){
       (S.email ? ' &middot; <b>' + esc(S.email) + '</b>' :
                  ' &middot; <i>committee password</i>') + '</div>' +
     '<div class="mrows">' + rows + '</div>' + tools +
-    '<div class="foot"><span>Counts come from the snapshot, which rebuilds hourly &mdash; ' +
-    'except early dismissal follow-up, which is read live every time this page loads. ' +
+    /* NO INTERVAL IN THIS SENTENCE, DELIBERATELY. It said "rebuilds hourly"
+       until 4 August 2026, when the trigger had run every ten minutes for as
+       long as it had existed. Naming a number here means a Config change has
+       to remember to come and edit a string in a different file, and it will
+       not — that is how the wrong number got here. The snapshot stamps its own
+       age on the rows above; that stamp is always true, and this line points
+       at it instead. It also still named "early dismissal follow-up", an area
+       shelved on 3 August, and did not mention grooming, which is also live. */
+    '<div class="foot"><span>Counts come from the snapshot, which is rebuilt on a timer &mdash; ' +
+    'each area says how old its figures are. Early dismissals and grooming are read live. ' +
     'Nothing is locked &mdash; every area opens for anyone.</span>' +
     '<span class="sp"></span><button class="plain" id="out">Sign out</button></div>' +
   '</div></div>';
@@ -1737,7 +1764,10 @@ function statusLabel(code){
 }
 
 function stateOf(r){ return S.local[r.entryId] || String(r.state || ''); }
-function isLive(r){ return /counted/i.test(stateOf(r)); }
+/* isLive(r) lived here until 4 August 2026. Nothing called it — every caller
+   inlined /counted/i.test(stateOf(r)) instead — so it was a second definition
+   of the same rule, sitting where somebody would reasonably expect to find the
+   only one. */
 
 function heldNow(x){
   var k = x.id + '|' + x.domain;
@@ -2219,7 +2249,7 @@ function studentHtml(){
 
     (over ? '<div class="note warn"><b>' + over + ' offence' + (over===1?'':'s') +
       ' excused just now.</b> The figures above still come from the last snapshot and ' +
-      'will drop at the next hourly rebuild.</div>' : '') +
+      'will drop at the next snapshot rebuild.</div>' : '') +
 
     /* NO HOLD BUTTON WITHOUT A LADDER TO HOLD. A hold suspends follow-up on
        one ladder, so on a student who is on none it would have read "Hold
@@ -3026,7 +3056,11 @@ function emailHtml(){
     if (r.noClass.length)
       warn += '<div class="note err"><b>' + esc(r.noClass.join(', ')) +
               (r.noClass.length===1 ? ' has' : ' have') + ' no class on the Log row</b>, so there is ' +
-              'nobody to address about ' + (r.noClass.length===1?'them':'them') + '. ' +
+              /* Singular "them" either way, deliberately — the Log row has no
+                 gender and inventing one would be worse than a plural-looking
+                 pronoun. This was a ternary choosing between 'them' and
+                 'them' until 4 August 2026. */
+              'nobody to address about them. ' +
               'That is a gap in the record rather than a gap in the Master.</div>';
     if (r.absent.length)
       warn += '<div class="note warn"><b>' + esc(r.absent.join(', ')) +
@@ -3129,8 +3163,8 @@ function record(){
   }).then(function(res){
     S.busy = false;
     if (!res || !res.ok){ S.err = (res && res.error) || 'Nothing was recorded.'; render(); return; }
-    /* OPTIMISTIC. The snapshot will not know about this until the next hourly
-       rebuild, so the screen carries the change itself and says so. */
+    /* OPTIMISTIC. The snapshot will not know about this until it next
+       rebuilds, so the screen carries the change itself and says so. */
     rows.forEach(function(x){ S.stamped[x.entryId] = { by:S.user }; });
     S.sel = {};
     S.result = { stamped: Number(res.stamped)||0, already: Number(res.alreadyDone)||0, total: rows.length };
@@ -3187,7 +3221,7 @@ function sentHtml(){
     '<div class="lede">Written on the offence that reached the tier &mdash; ' +
       'the date, your name, and what the tier asked for. ' +
       'The counts on the previous screen are still from the last snapshot; ' +
-      'they catch up at the next hourly rebuild.</div>' + extra +
+      'they catch up at the next snapshot rebuild.</div>' + extra +
     '<div class="stack">' +
       '<button data-go="lc">Back to ' + esc(areaOf(S.area).title) + '</button>' +
       '<button class="ghost" data-go="menu">All areas</button>' +
@@ -3386,8 +3420,6 @@ function wire(){
   };
 }
 
-/* Teacher addresses arrive only when an email is being written, and are held
-   in memory for the session. Never localStorage — the same rule as the token. */
 /* Teacher addresses arrive only when an email is being written, and are held
    in memory for the session. Never localStorage — the same rule as the token.
 

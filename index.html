@@ -2816,7 +2816,11 @@ function picked(){
    action belongs to the DM rather than the form teacher. Putting it in the
    table of lates produced a second row for the same student saying "3" when
    the row above said "5" — in a message going to sixty form teachers. */
-function pickedLates(){ return picked().filter(function(x){ return x.domain !== 'Thursday privilege'; }); }
+/* pickedLates() sat here until 6 August 2026 — the exact mirror of pickedThu()
+   below, and never called by anything. Its twin is used, which is what made it
+   look load-bearing: a reader finding one naturally assumes both are wired up
+   and goes looking for where the non-Thursday branch is handled. Nowhere: the
+   callers that want everything use picked() directly. */
 function pickedThu(){   return picked().filter(function(x){ return x.domain === 'Thursday privilege'; }); }
 
 /* ONE BLOCK PER LADDER, in the order the area holds them. The email was

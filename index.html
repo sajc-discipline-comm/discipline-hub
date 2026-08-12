@@ -613,7 +613,7 @@ var TOKEN = null;
 
 var S = {
   view:'signin', user:'', name:'', busy:false, err:'',
-  snap:null,            // hubSnapshot's reply, whole
+  snap:null,            // the snapshot part of hubAll's reply, whole
   det:null,             // the detention part of hubAll's reply, or null
   /* hubEarly's reply, or null. NULL MEANS "COULD NOT READ", NEVER "NONE" —
      the menu must be able to say which, because an unreadable record and an
@@ -718,10 +718,23 @@ function esc(s){ return String(s===null||s===undefined?'':s)
    complete — against one in ten before any of this.
    Writes are still absent, for the reason that has not changed: retrying a
    write whose reply went missing is how one late arrival becomes two. */
+/* ONLY WHAT THIS PAGE ACTUALLY SENDS — trimmed 11 August 2026. It used to
+   list goLogin, gateLogin, hubSnapshot, hubDetention, hubLive, bootstrap and
+   refresh as well. Every one of those is a real action, and not one of them is
+   ever passed to api() from here: goLogin and bootstrap belong to the green
+   slip page, gateLogin to the scanner, hubLive to the General Office screen,
+   and hubSnapshot and hubDetention were folded into hubAll on 4 August.
+   A lookup table like this gets read as an inventory of what the page does,
+   and the extra keys made the Hub look like it still made two calls it had
+   stopped making, plus five it never made. Same trap as pickedLates(). Every
+   action below is one this file names; the write actions — hubStamp among
+   them — are absent
+   deliberately, and that has not changed: retrying a write whose reply went
+   missing is how one late arrival becomes two. */
 var RETRY_SAFE = {
-  hubLogin:3, goLogin:3, gateLogin:3, hubGoogleLogin:3,
-  hubAll:3, hubSnapshot:3, hubDetention:3, hubEarly:3, hubLive:3, hubHistory:3,
-  hubTeachers:3, hubGrooming:3, hubGroomingStudent:3, bootstrap:3, refresh:3
+  hubLogin:3, hubGoogleLogin:3,
+  hubAll:3, hubEarly:3, hubHistory:3,
+  hubTeachers:3, hubGrooming:3, hubGroomingStudent:3
 };
 
 function apiOnce(action, payload){
@@ -1741,9 +1754,9 @@ function loadHistory(id){
   });
 }
 
-/* Which statuses count towards a ladder, read from ⚙️ Statuses via
-   hubSnapshot rather than assumed here. A(MC) is recorded and does not count;
-   so is an Awards or Official early release. Putting them in one undifferentiated
+/* Which statuses count towards a ladder, read from ⚙️ Statuses and delivered
+   in hubAll's snapshot part rather than assumed here. A(MC) is recorded and
+   does not count; so is an Awards or Official early release. Putting them in one undifferentiated
    list of "offences" was wrong twice over — it implied the school held them
    against the student, and it made the totals impossible to trace. */
 function statusMeta(code){

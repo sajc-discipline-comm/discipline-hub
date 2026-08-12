@@ -661,6 +661,23 @@ var S = {
   sel:{},               // entryId -> true
   stamped:{},           // entryId -> {by, when} — optimistic, until the next rebuild
   result:null,
+
+  /* ── detention, added 12 August 2026 ───────────────────────────────────
+     NOTHING HERE IS OPTIMISTIC, unlike stamped/local/holdLocal above, and the
+     difference is deliberate. Those three exist because the snapshot will not
+     know about a change until a trigger rebuilds it, which can be ten minutes.
+     🪑 Detention is read LIVE by hubDetention, so after a write the honest
+     move is to read it again rather than to draw what we think we wrote —
+     a mirror would drift the first time apiHubSchedule_ changed a default,
+     and it would drift silently. */
+  dtab:'next',          // Detention Sessions: coming up / held / still owed
+  sched:null,           // { x, booked, left } — the student being booked
+  pickDates:{},         // session date string -> true
+  sess:'',              // the session date open for attendance
+  attDraft:{},          // detentionId -> { att, moved }, unsaved
+  derr:'',              // a failed re-read of 🪑 Detention, shown where it matters
+  backTo:'',            // where the booking screen's back link goes
+
   first:true
 };
 
@@ -731,9 +748,20 @@ function esc(s){ return String(s===null||s===undefined?'':s)
    them — are absent
    deliberately, and that has not changed: retrying a write whose reply went
    missing is how one late arrival becomes two. */
+/* hubDetention IS BACK, ADDED 12 AUGUST 2026 — and it is the exception that
+   proves the rule above rather than a hole in it. It was removed on 11 August
+   because this page had stopped calling it: it was folded into hubAll on
+   4 August and nothing else asked for it. The detention screens call it again,
+   on its own, to RE-READ the tab after a booking or an attendance mark. It is
+   a read. It changes nothing, so a second attempt costs nothing, and giving up
+   after one on a fault known to be collision would leave somebody looking at a
+   room that no longer matches the sheet.
+   THE TWO DETENTION WRITES ARE STILL ABSENT, deliberately and permanently:
+   hubSchedule and hubAttendance. A repeated booking is a student sitting a
+   Wednesday they did not owe, and nobody would ever find it. */
 var RETRY_SAFE = {
   hubLogin:3, hubGoogleLogin:3,
-  hubAll:3, hubEarly:3, hubHistory:3,
+  hubAll:3, hubEarly:3, hubHistory:3, hubDetention:3,
   hubTeachers:3, hubGrooming:3, hubGroomingStudent:3
 };
 
@@ -858,7 +886,15 @@ function snapRow(r, cols){
     action:   String(cell(r,cols,'Action')||''),
     whoActs:  String(cell(r,cols,'Who acts')||''),
     follows:  /^y/i.test(String(cell(r,cols,'DC follows up')||'')),
-    sessions: Number(cell(r,cols,'Detention sessions'))||0,
+    /* BLANK IS NOT ZERO, and the distinction is the ladder's own. readLadders_
+       returns null for an empty "Detention sessions" cell precisely because
+       "nobody has decided" and "decided: none" are different facts, and the
+       health check refuses the first. Number('')||0 collapsed them here, which
+       turned an undecided tier into a tier that deliberately owes nothing —
+       and the detention screen then went on to EXPLAIN the absence as policy.
+       Fixed 12 August 2026. null now travels all the way to the screen. */
+    sessions: String(cell(r,cols,'Detention sessions')).trim() === ''
+                ? null : (Number(cell(r,cols,'Detention sessions'))||0),
     last:     String(cell(r,cols,'Last offence date')||''),
     entryId:  String(cell(r,cols,'Entry ID')||''),
     state:    String(cell(r,cols,'State')||''),
@@ -867,8 +903,57 @@ function snapRow(r, cols){
     heldWhy:  String(cell(r,cols,'Hold reason')||''),
     atDM:     /^y/i.test(String(cell(r,cols,'At DM boundary')||'')),
     quiet:    Number(cell(r,cols,'Days since last offence')),
-    dates:    String(cell(r,cols,'Dates')||'')
+    dates:    String(cell(r,cols,'Dates')||''),
+    /* WHICH TERM THESE COUNTS ARE FOR. Needed to scope "already booked" — see
+       bookedFor. Blank on a snapshot built before 12 August 2026. */
+    termNo:   String(cell(r,cols,'Term')||''),
+    /* THE TOTAL OWED IN THIS DOMAIN THIS TERM, with the ladder's Sessions
+       basis already applied server-side. The browser does not walk the ladder:
+       latecoming's figure is the total AT the tier, truancy's is the sum over
+       every instance, and which of those applies is a cell on 🪜 Ladders. A
+       rule belongs on one side of the wire only.
+       '' means the ladder cell is blank — nobody has decided — which is not
+       the same as 0 and must not become it. */
+    owed:     String(cell(r,cols,'Sessions owed')).trim() === ''
+                ? null : (Number(cell(r,cols,'Sessions owed'))||0)
   };
+}
+
+/* THE IDENTITY OF A SNAPSHOT ROW IS STUDENT + DOMAIN, NOT ENTRY ID.
+   Added 12 August 2026, after a review found the Hub opening the wrong ladder.
+
+   pushSnapshotRow_ emits TWO rows for one latecoming student — Latecoming and
+   Thursday privilege — and both take their anchor from the last offence in
+   their own date list. When the student's most recent late fell on a Thursday
+   those two lists end on the SAME offence, so the two rows carry the SAME
+   Entry ID. Every lookup in this file was written as
+
+       allRows().forEach(function(r){ if (r.entryId === id) x = r; });
+
+   which takes the LAST match, and rows are sorted by Area, where
+   'JC1 Latecoming' sorts before 'JC1 Thursday privilege'. So the Thursday row
+   always won: the student page opened the wrong ladder, and the booking screen
+   would have booked a two-session latecoming debt as a zero-session privilege
+   removal, leaving the real debt unbooked and re-offering it for ever.
+
+   Entry ID is still what the stamp is written against — that is a Log row and
+   it is correct. It is simply not a key. */
+function rowKey(x){ return x.id + '|' + x.domain; }
+function rowByKey(k){
+  var found = null;
+  allRows().forEach(function(r){ if (rowKey(r) === k) found = r; });
+  return found;
+}
+/* Which OTHER domains hang off the same offence row. Two domains sharing an
+   anchor share the stamp — hubStamp writes to an Entry ID, and one Log row
+   cannot record that latecoming was followed up and the Thursday privilege
+   was not. Surfaced rather than hidden, because the consequence is that
+   following up either one silently clears both at the next rebuild. */
+function sharesAnchor(x){
+  if (!x.entryId) return [];
+  return allRows().filter(function(r){
+    return r.entryId === x.entryId && r.id === x.id && r.domain !== x.domain;
+  });
 }
 
 function allRows(){
@@ -922,25 +1007,83 @@ function heldIn(key){ return rowsFor(key).filter(isHeld); }
 
 /* Sessions still to book: what the tier says is owed, less what is already in
    🪑 Detention for that student in that area. */
-function bookedFor(id, area){
-  if (!S.det || !S.det.rows) return null;
+/* WHAT IS ALREADY BOOKED AGAINST **THIS OFFENCE**.
+   Rewritten 12 August 2026. It used to count every row that student had ever
+   had in that Area — all terms, all tiers, served or not — and owedBookings
+   subtracted that from what the CURRENT tier owes. So a student who served
+   three sittings in July and then reached a new tier in August read as owing
+   NOTHING, on every screen, with nothing anywhere to notice. That is a real
+   consequence quietly not applied, which is the failure this project has been
+   bitten by twice.
+
+   Source Entry ID exists for exactly this. It is "the Log row of the offence
+   that produced this session" — so a new tier means a new anchor and a fresh
+   debt, and last term's served sittings cannot cancel this term's.
+
+   A LEGACY ROW CARRIES NO ANCHOR and therefore nets off nothing. That is
+   correct and deliberate: the old workbook linked a sitting to its offence
+   with a sentence, so an imported row cannot be matched to one. It still shows
+   on the student's record and in the room; it simply cannot cancel a debt it
+   cannot be proved to belong to. The booking screen says so out loud rather
+   than letting somebody double-book by accident.
+
+   NULL MEANS "COULD NOT FIND OUT", NEVER "NONE" — which is why the callers
+   carry an `unknown` flag rather than quietly counting zero. An unreadable
+   detention tab and an empty one produce the same number and opposite facts. */
+function bookedFor(id, area, termNo){
+  if (!detOk() || !S.det.rows) return null;
   var c = colIndex(S.det.columns), n = 0;
+  var want = String(termNo === null || termNo === undefined ? '' : termNo).trim();
   S.det.rows.forEach(function(r){
     if (String(cell(r,c,'Student ID')).trim() !== id) return;
     if (String(cell(r,c,'Area')).trim() !== area) return;
+    /* SCOPED TO THE TERM OF THE OFFENCE, and this is the whole point.
+       Counting all-time meant sittings served in July cancelled a debt earned
+       in August, so a student who had already done their time read as owing
+       nothing for a fresh offence. Counting against a single Entry ID was the
+       first attempt at a fix and was wrong the other way: it made every
+       offence its own debt, which is right for truancy and wrong for
+       latecoming, where the tier's figure IS the total. The rule now lives on
+       🪜 Ladders, the total arrives on the snapshot row, and this only has to
+       answer "how many has this student already been given, this term".
+
+       A ROW WITH NO TERM IS NOT SUBTRACTED. That is an imported line from the
+       old book, which cannot be tied to a term or to an offence — so counting
+       it here would quietly reduce a debt on the strength of a guess, which is
+       the exact failure this whole function was rewritten to stop. It is shown
+       instead, by otherSittings, on the booking screen, with a warning. The
+       two errors are not equal: over-offering puts a student in front of a
+       person who can check, and under-offering makes them disappear. */
+    var rowTerm = String(cell(r,c,'Term')).trim();
+    if (rowTerm === '') return;
+    if (want !== '' && rowTerm !== want) return;
     n++;
   });
   return n;
 }
-function toSchedule(key){
-  var n = 0, unknown = false;
-  rowsFor(key).forEach(function(x){
-    if (!x.sessions) return;
-    var b = bookedFor(x.id, x.area);
-    if (b === null){ unknown = true; n += x.sessions; }
-    else n += Math.max(0, x.sessions - b);
+/* Rows in this area for this student that are NOT tied to the current offence —
+   earlier tiers, and anything imported. Shown, never subtracted. */
+/* Sittings this student has in this area from ANOTHER term, or with no term
+   at all. Shown on the booking screen, never subtracted — an imported row
+   cannot be tied to the offence that caused it, so a person decides. */
+function otherSittings(id, area, termNo){
+  if (!detOk()) return [];
+  var want = String(termNo === null || termNo === undefined ? '' : termNo).trim();
+  return detRows().filter(function(d){
+    if (d.sid !== id || d.area !== area) return false;
+    var t = String(d.term || '').trim();
+    return t === '' || (want !== '' && t !== want);
   });
-  return { n:n, unknown:unknown };
+}
+/* ONE RULE, ONE ANSWER. This used to compute the area's owed figure its own
+   way — no hold filter, no blank-vs-zero handling — while the menu's Detention
+   Sessions row used owedBookings. Two numbers on one screen, two inches apart,
+   disagreeing. Now there is one implementation and the menu adds up. */
+function toSchedule(key){
+  var list = owedBookings(key);
+  return { n: list.reduce(function(n,o){ return n + o.left; }, 0),
+           unknown: list.some(function(o){ return o.unknown; }),
+           undecided: list.filter(function(o){ return o.undecided; }).length };
 }
 
 function sevClass(t){ return t>=5?'t5':t===4?'t4':t===3?'t3':t>=1?'t2':''; }
@@ -1250,7 +1393,15 @@ function loadAll(){
     S.snap = res.snapshot;
     /* Each part is judged on its own, exactly as when they were three separate
        calls — a broken detention tab must not cost you the menu. */
-    S.det   = (res.detention && res.detention.ok) ? res.detention : null;
+    /* THE FAILED REPLY IS KEPT, NOT FLATTENED TO NULL — changed 12 August
+       2026, when detention gained screens that have to explain themselves.
+       hubAll wraps each part separately so a broken tab cannot cost you the
+       menu, and it hands back {ok:false, error} saying WHY. Discarding that
+       and keeping only the absence meant the reason travelled as far as this
+       line and no further, so every screen downstream could say "could not be
+       read" and none of them could say what went wrong. Everything that reads
+       S.det goes through detOk(), which treats ok:false and null alike. */
+    S.det   = (res.detention && res.detention.ok) ? res.detention : (res.detention || null);
     S.early = (res.early && res.early.ok) ? res.early : null;
     /* No `det` key: detention arrives with this same reply, so there is never
        a moment where it is outstanding. It was initialised here and reset on
@@ -1311,6 +1462,12 @@ function loadGrooming(){
 function signOut(){
   TOKEN=null; S.teachers=null;
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user=''; S.email='';
+  /* THE DETENTION KEYS TOO, added 12 August 2026. An abandoned attendance
+     draft surviving a sign-out is somebody else's half-made decision sitting
+     in the next person's session. It was not reachable today only because a
+     click handler happened to reset it — a load-bearing side effect in an
+     event handler, which is one refactor from being a real fault. */
+  S.dtab='next'; S.sched=null; S.pickDates={}; S.sess=''; S.attDraft={}; S.derr=''; S.backTo='';
   S.early=null; S.groom=null; S.etab='term'; S.gtab='students'; S.from='';
   S.pending={ early:false, groom:false }; S.gerr='';
   /* Tell Google to forget the automatic-selection preference too. Without
@@ -1337,7 +1494,7 @@ function openArea(key){
   var a = areaOf(key);
   if (!a) return;
   S.sel = {};
-  worklist(key).forEach(function(x){ if (!isStamped(x)) S.sel[x.entryId] = true; });
+  worklist(key).forEach(function(x){ if (!isStamped(x)) S.sel[rowKey(x)] = true; });
   go('lc', { area:key, tab:'follow' });
 }
 
@@ -1354,6 +1511,10 @@ function render(moved){
   else if (S.view==='student') html = studentHtml();
   else if (S.view==='early')  html = earlyHtml();
   else if (S.view==='groom')  html = groomHtml();
+  else if (S.view==='det')    html = detHtml();
+  else if (S.view==='sched')  html = schedHtml();
+  else if (S.view==='booked') html = bookedHtml();
+  else if (S.view==='sess')   html = sessHtml();
   else if (S.view==='soon')   html = soonHtml();
   v.innerHTML = html;
   if (moved){ v.scrollTop = 0; } else { v.scrollTop = keep; }
@@ -1495,10 +1656,41 @@ function menuHtml(){
   }
 
 
-  var det = S.det && S.det.rows ? S.det.rows.length : 0;
-  rows += '<div class="mrow soon" data-area="__det"><div class="mt">Detention Sessions' +
-    '<em>' + (S.det ? det + ' row' + (det===1?'':'s') + ' in 🪑 Detention &mdash; the screen is not built yet'
-                    : 'could not read 🪑 Detention') + '</em></div></div>';
+  /* DETENTION SESSIONS. Built 12 August 2026. Three numbers rather than one,
+     and they are deliberately not summed: what is booked ahead, what is owed
+     and unbooked, and what has already fallen past its date unmarked. A single
+     total would let a student carried over from last term hide inside a
+     healthy-looking week. */
+  if (!detOk()){
+    rows += '<div class="mrow" data-area="__det"><div class="mt">Detention Sessions' +
+      '<em>🪑 Detention could not be read &mdash; open it for the reason</em></div></div>';
+  } else {
+    var dLate = overdue().length;
+    var dOwe = owedBookings(null);
+    var dBook = dOwe.reduce(function(n,o){ return n + o.left; }, 0);
+    var dUnd = dOwe.filter(function(o){ return o.undecided; }).length;
+    var dJunk = undated().length;
+    var dHome = dOwe.filter(function(o){ return !o.undecided && o.left && homeless(o.x); })
+                    .reduce(function(n,o){ return n + o.left; }, 0);
+    rows += '<div class="mrow' + (dLate ? ' t4' : '') + '" data-area="__det">' +
+      '<div class="mt">Detention Sessions<em>the Wednesday room &mdash; who is in it, and who still owes' +
+        (dUnd ? ' &middot; ' + dUnd + ' tier' + (dUnd===1?'':'s') + ' with no session count set' : '') +
+        (dJunk ? ' &middot; ' + dJunk + ' row' + (dJunk===1?'':'s') + ' with an unreadable date' : '') +
+        /* WHY THIS TOTAL CAN EXCEED THE FOUR AREA FIGURES ABOVE. A student
+           whose class code does not resolve to a cohort belongs to no menu
+           area, so their debt is real, is counted here, and appears in none of
+           the four rows above it. Two figures on one screen that do not add up
+           is exactly the kind of thing a reader silently distrusts, so the
+           difference is named rather than left to be noticed. */
+        (dHome ? ' &middot; <b>' + dHome + ' with no cohort</b>, counted here and in no area above' : '') +
+      '</em></div>' +
+      /* DISTINCT SITTINGS, not room appearances — a rescheduled student is
+         deliberately in two rooms, so summing room sizes counted them twice. */
+      big(bookedAhead(), 'booked in ahead') +
+      big(dBook, 'owed, not booked') +
+      big(dLate, 'overdue') +
+    '</div>';
+  }
 
   var dm = allRows().filter(function(x){ return x.atDM && !isHeld(x); }).length;
   var held = allRows().filter(isHeld).length;
@@ -1542,8 +1734,15 @@ function menuHtml(){
 /* ── a latecoming area ────────────────────────────────────────────────── */
 function lcHtml(){
   var key = S.area, a = areaOf(key);
+  /* ADDED 12 AUGUST 2026. Until the detention screens existed, 'lc' was only
+     ever reached through openArea(), which validates the key before it sets
+     it — so a is never null and nothing checked. Booking is now reachable from
+     Detention Sessions, whose Cancel and back links come here, so the key can
+     arrive from further away. Fall back to the menu rather than throwing on
+     a.title, which would blank the screen with no way out but a reload. */
+  if (!a) return menuHtml();
   var w = worklist(key), held = heldIn(key);
-  var pick = w.filter(function(x){ return S.sel[x.entryId] && !isStamped(x); });
+  var pick = w.filter(function(x){ return S.sel[rowKey(x)] && !isStamped(x); });
 
   var body = '';
   if (S.tab === 'follow'){
@@ -1566,10 +1765,7 @@ function lcHtml(){
         '<div class="note">Offences keep accruing while a hold is on. Only the follow-up stops.</div>';
     }
   } else {
-    body = '<div class="note q"><b>The detention screen is not built yet.</b> ' +
-      'This area owes <b>' + toSchedule(key).n + '</b> detention session' +
-      (toSchedule(key).n===1?'':'s') + ' according to 🪜 Ladders. Scheduling, the notice and ' +
-      'attendance are the next slice.</div>';
+    body = lcDetHtml(key);
   }
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
@@ -1596,12 +1792,22 @@ function lcRow(x, i){
   }
   var cls = sevClass(x.tier);
   var thu = (x.domain === 'Thursday privilege');
-  return '<div class="row ' + cls + (S.sel[x.entryId]?' sel':'') + '" data-pick="' + esc(x.entryId) + '">' +
-    '<div class="badge">' + (S.sel[x.entryId] ? '&#10003;' : n) + '</div>' +
+  var k = rowKey(x), shared = sharesAnchor(x);
+  return '<div class="row ' + cls + (S.sel[k]?' sel':'') + '" data-pick="' + esc(k) + '">' +
+    '<div class="badge">' + (S.sel[k] ? '&#10003;' : n) + '</div>' +
     '<div class="body"><div class="p">' + esc(x.name) + '</div>' +
     '<div class="meta">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) +
       (thu ? ' <span class="tag thu">Thursday privilege</span>' : '') + '</div>' +
-    '<div class="s">' + lineFor(x) + '</div></div>' +
+    '<div class="s">' + lineFor(x) +
+      /* TWO DOMAINS, ONE OFFENCE. Said out loud because the consequence is
+         invisible otherwise: the stamp is written against a Log ROW, and one
+         row cannot record that latecoming was followed up and the Thursday
+         privilege was not. So following up either clears both at the next
+         rebuild, whether or not both were ticked. */
+      (shared.length ? '<br><span class="tag thu">shares this offence with ' +
+        esc(shared.map(function(r){ return domainLabel(r.domain); }).join(', ')) +
+        ' &mdash; following up either records both</span>' : '') +
+    '</div></div>' +
     statHtml(x) +
     '<div class="tierslot"><span class="tag ' + (thu ? 'quiet' : cls) + '">' +
       /* A one-rung ladder has no tiers to compare, so a "Tier 1" beside a
@@ -1620,7 +1826,7 @@ function lcRow(x, i){
    a touchscreen, and this is the only way to reach the student page. Hover
    reveals the WORD, not the target. */
 function goHtml(x){
-  return '<div class="rowgo opn" data-open="' + esc(x.entryId) + '" title="Open ' + esc(x.name) + '">' +
+  return '<div class="rowgo opn" data-open="' + esc(rowKey(x)) + '" title="Open ' + esc(x.name) + '">' +
     '<span class="lbl">Open</span><span class="chev">&rarr;</span></div>';
 }
 
@@ -1684,9 +1890,12 @@ function legendHtml(key){
    say WHAT the count is, and the question somebody actually has at the point
    of following up is WHY — which dates, was one of them already excused, and
    is there a reason not to count one of them at all. */
-function openStudent(entryId){
-  var x = null;
-  allRows().forEach(function(r){ if (r.entryId === entryId) x = r; });
+function openStudent(key){
+  /* BY ROW KEY, NOT ENTRY ID — see rowKey. Two domains can share an Entry ID,
+     and this loop used to take the last match, which is always the Thursday
+     privilege row. It opened the wrong ladder for a real student on the page
+     somebody uses to decide what to do about them. */
+  var x = rowByKey(key);
   if (!x) return;
   /* THE ROW YOU CLICKED IS NOT THE STUDENT. A student can sit on more than one
      ladder at once, and each ladder counts a DIFFERENT THING — 9 lates this
@@ -2820,8 +3029,948 @@ function groomCategoriesHtml(d){
 
 
 /* ── the daily email ──────────────────────────────────────────────────── */
+/* ══ DETENTION ═════════════════════════════════════════════════════════════
+   Built 12 August 2026. FRONTEND ONLY — hubSchedule, hubAttendance and
+   hubDetention were all written in WebApi.gs on 1 August, LockService-guarded
+   and already in ROLE_ACTIONS.dc, and this file had never called any of them.
+   Nothing in Apps Script changed for this, so nothing needs redeploying.
+
+   THE ONE THING TO UNDERSTAND BEFORE EDITING ANY OF IT: a session is not a
+   record. It is every row sharing a Session date. That string IS the join key,
+   which is why exactly one function below formats one, and why adding to an
+   existing session sends back the stored string rather than a re-made one.
+   Two spellings of the same Wednesday are two rooms, and nothing anywhere
+   would notice. */
+
+var ATT_OK = 'Attended';
+var MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var DOW3 = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+/* THE ONLY PLACE A SESSION DATE IS FORMATTED. Matches stampFor_ in
+   SheetTools.gs — 'dd MMM yyyy (EEE)', DAY ZERO-PADDED — which is what Issued
+   on and every other date the system writes already uses. The padding is not
+   cosmetic: '9 Aug 2026 (Sun)' and '09 Aug 2026 (Sun)' are different strings
+   and therefore different rooms. */
+function dstamp(d){
+  return ('0' + d.getDate()).slice(-2) + ' ' + MON3[d.getMonth()] + ' ' +
+         d.getFullYear() + ' (' + DOW3[d.getDay()] + ')';
+}
+/* '09 Aug 2026 (Sun)' back to a Date, at midnight. Null if it is not that
+   shape — which is possible, because the Detention tab is plain text and the
+   old workbook's dates will arrive through the import in whatever spellings it
+   used. A row whose date cannot be read is shown, never silently dropped. */
+function dparse(s){
+  var m = /^\s*(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/.exec(String(s||''));
+  if (!m) return null;
+  var mi = MON3.map(function(x){ return x.toLowerCase(); }).indexOf(m[2].toLowerCase());
+  if (mi < 0) return null;
+  return new Date(Number(m[3]), mi, Number(m[1]));
+}
+function midnight(){ var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+
+/* ONE SPELLING PER DAY, ENFORCED RATHER THAN HOPED FOR.
+   Added 12 August 2026. dstamp already matched stampFor_ byte for byte, but
+   nothing forced anything else through it, and two things bypass it:
+
+     · Rescheduled to is FREE TEXT. Typing '26 Aug' created a phantom session
+       by that name, sitting in Coming up for ever, permanently disjoint from
+       the real 26 August room.
+     · THE IMPORT. The old workbook writes unpadded days, so '2 Sep 2026 (Wed)'
+       and '02 Sep 2026 (Wed)' became two rooms for one afternoon — rendered
+       with the identical label, so nobody could tell which was which.
+
+   canonDate returns the canonical spelling of anything it can read, and '' for
+   anything it cannot. It accepts what the old book actually contains: unpadded
+   days, dd/mm/yyyy, yyyy-mm-dd, and a missing day-name. */
+function canonDate(s){
+  var t = String(s||'').trim();
+  if (!t) return '';
+  var m = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/.exec(t);
+  if (m){
+    var mi = MON3.map(function(x){ return x.toLowerCase(); })
+                 .indexOf(m[2].slice(0,3).toLowerCase());
+    if (mi >= 0) return dstamp(new Date(Number(m[3]), mi, Number(m[1])));
+  }
+  m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/.exec(t);
+  if (m){ var y = Number(m[3]); if (y < 100) y += 2000;
+          return dstamp(new Date(y, Number(m[2]) - 1, Number(m[1]))); }
+  m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t);
+  if (m) return dstamp(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return '';
+}
+/* WHERE A SITTING ACTUALLY FALLS. A row moved to a later Wednesday is owed on
+   the NEW date, not the old one — overdue() read only the stored date, so a
+   sitting that somebody had marked and properly rescheduled into the future
+   was still reported overdue, turned the menu red, and was listed under a
+   sentence its own row contradicted two inches away. */
+function effDate(d){ return canonDate(d.moved) || canonDate(d.date) || ''; }
+
+/* The next N Wednesdays, today included if today IS one. Wednesday because
+   that is what the record says every session has been; it is a SUGGESTION and
+   the free date field beside it is the answer to a week that moves. */
+function nextWeds(n){
+  var out = [], d = midnight();
+  while (d.getDay() !== 3) d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+  for (var i = 0; i < n; i++){
+    out.push(new Date(d.getFullYear(), d.getMonth(), d.getDate() + i * 7));
+  }
+  return out;
+}
+
+function detOk(){ return !!(S.det && S.det.ok !== false && S.det.columns); }
+
+/* Every row of 🪑 Detention as an object. Reads BY HEADER NAME, like every
+   other read in this file, so a column inserted in the middle of DET_COLS
+   cannot silently shift the meaning of a screen. */
+function detRows(){
+  if (!detOk() || !S.det.rows) return [];
+  var c = colIndex(S.det.columns);
+  return S.det.rows.map(function(r, i){
+    return {
+      i:i,
+      did:      String(cell(r,c,'Detention ID')||''),
+      sid:      String(cell(r,c,'Student ID')||''),
+      name:     String(cell(r,c,'Name')||''),
+      cls:      String(cell(r,c,'Class')||''),
+      area:     String(cell(r,c,'Area')||''),
+      srcEntry: String(cell(r,c,'Source Entry ID')||''),
+      ladder:   String(cell(r,c,'Ladder')||''),
+      tier:     Number(cell(r,c,'Tier'))||0,
+      n:        Number(cell(r,c,'Session n'))||0,
+      of:       Number(cell(r,c,'Session of'))||0,
+      date:     String(cell(r,c,'Session date')||''),
+      slot:     String(cell(r,c,'Slot')||''),
+      by:       String(cell(r,c,'Issued by')||''),
+      on:       String(cell(r,c,'Issued on')||''),
+      att:      String(cell(r,c,'Attendance')||''),
+      moved:    String(cell(r,c,'Rescheduled to')||''),
+      table:    String(cell(r,c,'Table')||''),
+      remarks:  String(cell(r,c,'Remarks')||''),
+      term:     String(cell(r,c,'Term')||'')
+    };
+  });
+}
+
+/* STILL OWED, DERIVED — never stored, which is the decision of 1 August and
+   the reason carry-over survives a term boundary and a year boundary without
+   anybody maintaining it. A row is owed until somebody marks it Attended.
+   A past date that is not Attended is owed AND overdue; that is the number
+   worth putting on a screen. */
+function isOwed(d){ return d.att !== ATT_OK; }
+/* Judged on the EFFECTIVE date — see effDate. A row whose date cannot be read
+   at all is never "past": an unreadable date is not evidence of anything, and
+   guessing at it is how an imported line becomes a chase. */
+function isPast(d){ var t = dparse(effDate(d)); return !!t && t < midnight(); }
+function overdue(){ return detRows().filter(function(d){ return isOwed(d) && isPast(d); }); }
+/* Rows the import left with a date nothing can read. Surfaced on their own,
+   never counted as upcoming and never counted as overdue. */
+function undated(){ return detRows().filter(function(d){ return !effDate(d); }); }
+
+/* WHICH MENU AREA A DETENTION ROW BELONGS TO, and this is not the identity
+   mapping it looks like. The snapshot's Area is cohort + DOMAIN — 'JC1 A(VRP)',
+   'JC1 Thursday privilege' — while the menu's four keys are cohort + KIND:
+   'JC1 Attendance'. They coincide for latecoming and for nothing else, so a
+   filter written as `d.area === key` finds every latecoming row and no
+   absence row at all, quietly, on the one screen where a missing row means
+   "nothing is owed". Mirrors the match functions in AREAS, deliberately: if
+   those change, this has to change with them. */
+function areaKeyOf(area){
+  var s = String(area || '');
+  var m = /^(JC[12])\s+(.*)$/.exec(s);
+  if (!m) return '';
+  if (/^A\(/.test(m[2])) return m[1] + ' Attendance';
+  if (m[2] === 'Latecoming' || m[2] === 'Thursday privilege') return m[1] + ' Latecoming';
+  return '';
+}
+/* A ROW WHOSE COHORT COULD NOT BE DERIVED. pushSnapshotRow_ writes
+   Area = (cohort ? cohort + ' ' : '') + domain, so a class code cohortOf_
+   cannot read produces a BARE domain — 'A(WOR)' rather than 'JC1 A(WOR)'.
+   That is the Headstart case in the weeks before their JC1 year starts, and
+   it is exactly the population the 6 August naming decision was made for.
+   Such a row belongs to no menu area, which is honest; what is not honest is
+   letting it fall silently out of every screen. It is named here so the
+   all-areas view can say so. */
+function homeless(x){ return !areaKeyOf(x.area); }
+
+/* EVERY DATE THIS STUDENT IS ALREADY ON, in any area. hubSchedule refuses a
+   second row for one student on one date, and it is right to — two people
+   following up different domains would otherwise book somebody into the same
+   afternoon twice and find out when the student turned up expecting to leave
+   after one. The refusal is the guard; this is so nobody meets it. */
+function takenDates(sid){
+  var t = {};
+  detRows().forEach(function(d){
+    if (d.sid !== sid) return;
+    /* BOTH DATES, and the second one is the fix. takenDates read only the
+       stored Session date, so a student moved from 19 August to 2 September
+       could be booked onto 2 September again — and apiHubSchedule_'s own clash
+       check had the identical hole, reading only column 10, so the refusal
+       that this list exists to pre-empt did not fire either. Both are fixed;
+       this one so nobody meets the error, that one so nobody gets past it. */
+    var a = canonDate(d.date);   if (a) t[a] = 1;
+    var b = canonDate(d.moved);  if (b && d.att !== ATT_OK) t[b] = 1;
+  });
+  return t;
+}
+
+/* A SESSION IS EVERY ROW SHARING A DATE — plus anybody rescheduled INTO it.
+   The second half matters and is easy to miss: hubAttendance writes
+   Rescheduled to onto the SAME row and leaves Session date alone, so a moved
+   student is still filed under the afternoon they missed. They belong in both
+   rooms, saying different things in each: expected-and-absent in the old one,
+   arriving-by-reschedule in the new. */
+function roomFor(date){
+  var want = canonDate(date) || String(date||'').trim();
+  return detRows().filter(function(d){
+    var here  = (canonDate(d.date)  || String(d.date||'').trim())  === want;
+    var moved = (canonDate(d.moved) || String(d.moved||'').trim()) === want;
+    return here || (moved && d.att !== ATT_OK);
+  });
+}
+function movedInto(d, date){
+  var want = canonDate(date) || String(date||'').trim();
+  return (canonDate(d.date) || String(d.date||'').trim()) !== want &&
+         (canonDate(d.moved) || String(d.moved||'').trim()) === want;
+}
+
+/* Every session date that exists, soonest first, with what is in it. */
+/* GROUPED ON THE CANONICAL SPELLING, and carrying the RAW string that was
+   actually stored. Both halves matter: grouping on the canonical form is what
+   stops two spellings of one Wednesday becoming two rooms, and keeping the raw
+   one is what lets a booking ADD TO an existing session by sending back the
+   exact string already in the sheet rather than inventing a third spelling. */
+function sessions(){
+  var seen = {};
+  var add = function(raw){
+    var k = canonDate(raw);
+    if (!k) return;                       // unreadable — see undated()
+    if (!seen[k]) seen[k] = { canon:k, raw:String(raw).trim() };
+  };
+  detRows().forEach(function(d){
+    add(d.date);
+    if (d.moved && d.att !== ATT_OK) add(d.moved);
+  });
+  return Object.keys(seen).map(function(k){
+    var room = roomFor(k), t = dparse(k);
+    /* SLOT IS NOT PART OF THE KEY — the session date is the join key, by
+       design, and that is what makes a Wednesday a shared room. But the
+       retired 1.30–3.30pm slot ran CONCURRENTLY with 3.30–5.30pm in 2025 and
+       early 2026, so a historical date can hold two genuinely different
+       sittings. Grouping them is right; hiding that is not, so the slots
+       present are carried and the card names them when there is more than one. */
+    var slots = {};
+    room.forEach(function(d){ if (d.slot) slots[d.slot] = (slots[d.slot]||0) + 1; });
+    return { date:k, raw:seen[k].raw, when:t, room:room, slots:slots,
+             owed:room.filter(isOwed).length,
+             done:room.filter(function(d){ return !isOwed(d); }).length,
+             marked:room.filter(function(d){ return !!d.att; }).length };
+  }).sort(function(a,b){ return a.when - b.when; });
+}
+function upcoming(){ var t = midnight(); return sessions().filter(function(s){ return s.when >= t; }); }
+function pastSessions(){ var t = midnight(); return sessions().filter(function(s){ return s.when < t; }); }
+/* DISTINCT SITTINGS BOOKED AHEAD, not room appearances. A rescheduled student
+   is deliberately in two rooms — correct for the room view, and a double count
+   the moment you sum room sizes, which is what the menu's headline figure did. */
+function bookedAhead(){
+  var t = midnight();
+  return detRows().filter(function(d){
+    var w = dparse(effDate(d));
+    return !!w && w >= t;
+  }).length;
+}
+
+/* WHO STILL NEEDS BOOKING, ACROSS EVERY AREA. One entry per student per area,
+   because the ladder that produced the debt is what the notice has to name. */
+function owedBookings(filterKey){
+  var out = [];
+  (filterKey ? rowsFor(filterKey) : allRows()).forEach(function(x){
+    /* A HOLD PAUSES FOLLOW-UP, AND BOOKING IS FOLLOW-UP. Offences keep
+       accruing while a hold is on; only the following up stops, and issuing a
+       detention notice is following up. A held domain is still visible on its
+       area's worklist carrying who held it and why — it is paused, not hidden. */
+    if (isHeld(x)) return;
+    /* BLANK IS NOT ZERO. null means the 🪜 Ladders cell is empty — nobody has
+       decided what this tier owes — which is a thing to surface, not a thing
+       to treat as "owes nothing". 0 is a decision and is respected. */
+    /* THE SERVER'S FIGURE, NOT THE TIER'S. x.owed already has the ladder's
+       Sessions basis applied — the tier's total for latecoming, the sum over
+       every instance for truancy. x.sessions is kept for display, because
+       "tier 6 owes 2" is still the sentence a person wants to read. */
+    if (x.owed === null){
+      out.push({ x:x, owed:null, booked:0, left:0, unknown:false, undecided:true });
+      return;
+    }
+    if (!x.owed) return;
+    var b = bookedFor(x.id, x.area, x.termNo);
+    var left = (b === null) ? x.owed : Math.max(0, x.owed - b);
+    if (!left) return;
+    out.push({ x:x, owed:x.owed, booked:(b===null?0:b), left:left,
+               unknown:(b===null), undecided:false });
+  });
+  return out.sort(function(a,b){
+    if (a.undecided !== b.undecided) return a.undecided ? -1 : 1;
+    if (b.x.tier !== a.x.tier) return b.x.tier - a.x.tier;
+    if (b.left !== a.left) return b.left - a.left;
+    return String(a.x.name).localeCompare(String(b.x.name));
+  });
+}
+
+/* What else this student owes, outside the area being booked. Not a total to
+   act on — a sentence to read before adding a fifth Wednesday to somebody's
+   month. The ladders do not compound; only the sittings do. */
+function elsewhereFor(sid, area){
+  return owedBookings(null).filter(function(o){
+    return o.x.id === sid && o.x.area !== area && !o.undecided && o.left;
+  });
+}
+
+/* ── the Detention tab inside an area ─────────────────────────────────── */
+function lcDetHtml(key){
+  if (!detOk()){
+    return '<div class="note err"><b>🪑 Detention could not be read.</b> ' +
+      esc((S.det && S.det.error) || 'The tab did not come back with the rest of the sign-in.') +
+      ' Nothing here is safe to act on until it does &mdash; a booking list built from an ' +
+      'unreadable record would show every session as still to book.' +
+      '<div class="stack"><button class="ghost sm" id="detretry">Try reading it again</button></div></div>';
+  }
+  var all = owedBookings(key);
+  var owe = all.filter(function(o){ return !o.undecided; });
+  var unset = all.filter(function(o){ return o.undecided; });
+  var mine = detRows().filter(function(d){ return areaKeyOf(d.area) === key; });
+  var late = mine.filter(function(d){ return isOwed(d) && isPast(d); });
+
+  var head = '<div class="kpi">' +
+    '<div><b>' + owe.reduce(function(n,o){ return n + o.left; }, 0) + '</b><span>sessions to book</span></div>' +
+    '<div><b>' + owe.length + '</b><span>students waiting</span></div>' +
+    '<div><b>' + mine.filter(isOwed).length + '</b><span>booked, not yet served</span></div>' +
+    '<div><b>' + late.length + '</b><span>overdue</span></div>' +
+  '</div>';
+
+  var body;
+  if (!owe.length){
+    body = '<div class="blank">Nothing in ' + esc(key) + ' is waiting to be booked. ' +
+      'A tier only owes sessions where 🪜 Ladders gives it a number &mdash; latecoming tiers 1 to 4 ' +
+      'and the Thursday privilege are 0, deliberately, because "further actions" and a removed ' +
+      'privilege are not detention.</div>';
+  } else {
+    body = '<div class="rows">' + owe.map(function(o, i){
+      var cls = sevClass(o.x.tier);
+      return '<div class="row ' + cls + '" data-book="' + esc(rowKey(o.x)) + '">' +
+        '<div class="badge">' + (i+1) + '</div>' +
+        '<div class="body"><div class="p">' + esc(o.x.name) + '</div>' +
+        '<div class="meta">' + esc(o.x.cls) + ' &middot; ' + esc(domainLabel(o.x.domain)) + '</div>' +
+        '<div class="s">' + lineFor(o.x) +
+          (o.booked ? ' &mdash; <b>' + o.booked + ' of ' + o.owed + ' already booked</b>' : '') +
+        '</div></div>' +
+        '<div class="stats">' +
+          '<div class="stat"><div class="k">Owes</div><div class="v">' + o.owed + '</div></div>' +
+          '<div class="stat"><div class="k">To book</div><div class="v">' + o.left + '</div></div>' +
+        '</div>' +
+        '<div class="tierslot"><span class="tag ' + cls + '">Tier ' + o.x.tier + '</span>' +
+          '<div class="d">' + esc(o.x.action) + '</div></div>' +
+        '<div class="rowgo opn" title="Book ' + esc(o.x.name) + '">' +
+          '<span class="lbl">Book</span><span class="chev">&rarr;</span></div>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
+  if (unset.length){
+    body += '<div class="grouplabel">No session count set on the ladder</div>' +
+      '<div class="note warn"><b>' + unset.length + ' tier' + (unset.length===1?'':'s') +
+      ' here ' + (unset.length===1?'has':'have') + ' an empty <i>Detention sessions</i> cell in ' +
+      '🪜 Ladders.</b> Blank is not zero. Nobody is offered for booking against it, and nothing ' +
+      'here is wrong until somebody types a number &mdash; including a 0, which is a real answer.</div>' +
+      '<div class="rows">' + unset.map(function(o){
+        return '<div class="row flat"><div class="badge">?</div>' +
+          '<div class="body"><div class="p">' + esc(o.x.name) + '</div>' +
+          '<div class="meta">' + esc(o.x.cls) + ' &middot; ' + esc(o.x.domain) + ' tier ' + o.x.tier + '</div></div>' +
+          '<div class="tierslot"><span class="tag quiet">Not set</span></div></div>';
+      }).join('') + '</div>';
+  }
+
+  var owedList = '';
+  if (late.length){
+    owedList = '<div class="grouplabel">Overdue in this area</div><div class="rows">' +
+      late.map(function(d){ return detRowHtml(d, ''); }).join('') + '</div>' +
+      '<div class="note">A session whose date has passed and which nobody marked <b>Attended</b> ' +
+      'is still owed. That is derived from the attendance column rather than stored, so it ' +
+      'carries across a term and across the year on its own.</div>';
+  }
+
+  return head + body + owedList +
+    '<div class="note q"><b>Attendance is taken in Detention Sessions, not here.</b> ' +
+    'A Wednesday is a shared room &mdash; several people book into the same afternoon from ' +
+    'different areas, and whoever is on duty marks everyone in it. ' +
+    '<div class="stack"><button class="ghost sm" data-go="det">Open Detention Sessions</button></div></div>';
+}
+
+function detRowHtml(d, date){
+  var moved = date && movedInto(d, date);
+  var tag = !d.att ? '<span class="tag quiet">Not marked</span>'
+          : d.att === ATT_OK ? '<span class="tag ok">Attended</span>'
+          : '<span class="tag t4">' + esc(d.att) + '</span>';
+  return '<div class="row flat' + (d.att === ATT_OK ? ' done' : '') + '">' +
+    '<div class="badge">' + (d.att === ATT_OK ? '&#10003;' : '&#9679;') + '</div>' +
+    '<div class="body"><div class="p">' + esc(d.name) + '</div>' +
+    '<div class="meta">' + esc(d.cls) + ' &middot; ' + esc(d.area) +
+      (d.of ? ' &middot; session ' + d.n + ' of ' + d.of : '') +
+      (moved ? ' <span class="tag thu">moved from ' + esc(d.date) + '</span>' : '') + '</div>' +
+    '<div class="s">' + esc(d.ladder) + (d.tier ? ' tier ' + esc(d.tier) : '') +
+      ' &middot; issued ' + esc(d.on || 'date not recorded') + ' by ' + esc(d.by || 'somebody') +
+      (d.moved && !moved ? ' &mdash; <b>moved to ' + esc(d.moved) + '</b>' : '') +
+      (d.slot && !/3\.30/.test(d.slot) ? ' &middot; <b>' + esc(d.slot) + '</b> (retired slot)' : '') +
+      (d.table ? ' &middot; ' + esc(d.table) : '') + '</div></div>' +
+    '<div class="tierslot">' + tag + '</div>' +
+  '</div>';
+}
+
+/* ── booking one student ──────────────────────────────────────────────── */
+function openBooking(key){
+  var x = rowByKey(key);
+  if (!x || x.owed === null || !x.owed) return;
+  var b = bookedFor(x.id, x.area, x.termNo);
+  var left = (b === null) ? x.owed : Math.max(0, x.owed - b);
+  S.err = '';
+  /* SET S.area TOO. Booking is reachable from the Detention Sessions screen as
+     well as from inside an area, and both Cancel and the back link on the
+     booking screen go to 'lc' — which reads S.area and calls areaOf(key).title
+     on the result. Arriving from Detention Sessions with S.area still holding
+     whatever was open last session, or nothing at all, is a null dereference
+     on a screen somebody reached by pressing Cancel. */
+  var key = areaKeyOf(x.area);
+  /* WHERE BACK GOES. Booking is reachable from inside an area and from the
+     all-areas Detention Sessions screen, and a cohort-less row belongs to no
+     area at all — so the back link cannot just say "the area". It remembers. */
+  go('sched', { sched:{ x:x, booked:(b===null?0:b), left:left,
+                        others: otherSittings(x.id, x.area, x.termNo) },
+                pickDates:{}, backTo: (areaOf(key) ? 'lc' : 'det'),
+                area: (areaOf(key) ? key : S.area) });
+}
+
+function schedHtml(){
+  var s = S.sched;
+  if (!s) return soonHtml();
+  var x = s.x;
+  var taken = takenDates(x.id);
+  var chosen = Object.keys(S.pickDates).filter(function(k){ return S.pickDates[k]; });
+  var others = elsewhereFor(x.id, x.area);
+
+  /* EXISTING SESSIONS FIRST, and that ordering is the design rather than a
+     preference. Booking ADDS TO a Wednesday somebody else has already opened;
+     it does not create a competing one. Offering blank dates first would make
+     four people invent four Wednesdays for the same week. */
+  var open = upcoming();
+  var existing = open.length
+    ? open.map(function(o){
+        /* THE STORED SPELLING, NOT A REMADE ONE. Adding to a session sends
+           back the exact string already in the sheet, so an imported row
+           spelled '2 Sep 2026 (Wed)' keeps its room instead of gaining a
+           second one spelled '02 Sep 2026 (Wed)'. */
+        var on = !!S.pickDates[o.raw], clash = !!taken[o.date];
+        return '<div class="row' + (on?' sel':'') + (clash?' done':'') + '"' +
+          (clash ? '' : ' data-date="' + esc(o.raw) + '"') + '>' +
+          '<div class="badge">' + (on ? '&#10003;' : '&#9679;') + '</div>' +
+          '<div class="body"><div class="p">' + esc(longish(o.date)) + '</div>' +
+          '<div class="s">' + o.room.length + ' student' + (o.room.length===1?'':'s') +
+            ' already in this session' +
+            (clash ? ' &mdash; <b>' + esc(x.name) + ' is already in it</b>' : '') +
+            (Object.keys(o.slots).length > 1
+              ? ' &mdash; <b>two slots on this date:</b> ' + esc(Object.keys(o.slots).join(' · ')) : '') +
+          '</div></div>' +
+          '<div class="tierslot">' +
+            (clash ? '<span class="tag quiet">Already booked</span>'
+                   : '<span class="tag ' + (on?'ok':'quiet') + '">' + (on?'Chosen':'Add to this') + '</span>') +
+          '</div></div>';
+      }).join('')
+    : '';
+
+  /* COMPARED ON THE CANONICAL SPELLING. This used to filter on exact string
+     equality against the stored one, so a single imported row spelled with an
+     unpadded day left the same Wednesday offered TWICE, indistinguishably —
+     longish() renders both with the same label. */
+  var weds = nextWeds(8).map(dstamp).filter(function(d){
+    for (var i=0;i<open.length;i++) if (open[i].date === d) return false;
+    return true;
+  });
+  var newOnes = weds.map(function(d){
+    var on = !!S.pickDates[d], clash = !!taken[d];
+    return '<div class="row' + (on?' sel':'') + (clash?' done':'') + '"' +
+      (clash ? '' : ' data-date="' + esc(d) + '"') + '>' +
+      '<div class="badge">' + (on ? '&#10003;' : '&#9679;') + '</div>' +
+      '<div class="body"><div class="p">' + esc(longish(d)) + '</div>' +
+      '<div class="s">' + (clash ? esc(x.name) + ' is already in this one' : 'a new session') + '</div></div>' +
+      '<div class="tierslot">' +
+        (clash ? '<span class="tag quiet">Already booked</span>'
+               : '<span class="tag ' + (on?'ok':'quiet') + '">' + (on?'Chosen':'Open this one') + '</span>') +
+      '</div></div>';
+  }).join('');
+
+  var warn = '';
+  if (chosen.length && chosen.length !== s.left){
+    /* THE PARTIAL-BOOKING WARNING, and it is a real defect rather than a
+       nicety. apiHubSchedule_ numbers what it writes IN THIS CALL — Session n
+       is rows.length + 1 and Session of is dates.length — so booking two of a
+       student's three sittings writes "1 of 2" and "2 of 2", and the third,
+       booked later, becomes "1 of 1". The numbering is only true when the
+       whole debt goes in one go. Booking all of it at once is therefore the
+       default here, and doing otherwise says so. */
+    warn = '<div class="note warn"><b>' + chosen.length + ' of ' + s.left +
+      ' &mdash; the session numbering will be wrong.</b> The record numbers each sitting ' +
+      'against what is booked in one go, so booking part of a debt now writes ' +
+      '&ldquo;' + chosen.length + ' of ' + chosen.length + '&rdquo; and the rest starts again at one. ' +
+      'It is cosmetic on the sheet and confusing on a notice. Book all ' + s.left +
+      ' together unless you have a reason not to.</div>';
+  }
+
+  var earlier = (s.others || []);
+  var earlierNote = earlier.length
+    ? '<div class="note warn"><b>' + esc(x.name) + ' already has ' + earlier.length +
+      ' sitting' + (earlier.length===1?'':'s') + ' recorded in this area from another term.</b> ' +
+      earlier.map(function(d){
+        return esc(d.date || 'no date') + (d.att ? ' &mdash; ' + esc(d.att) : ' &mdash; not marked') +
+               (String(d.term||'').trim() ? ' <i>(term ' + esc(d.term) + ')</i>'
+                                          : ' <i>(imported &mdash; no term recorded)</i>');
+      }).join(' &middot; ') +
+      '. <b>Those are not subtracted from what is owed here</b>, because they belong to a ' +
+      'different term or to an imported line that cannot be tied to an offence. Check before ' +
+      'booking if you think one of them was for this.</div>'
+    : '';
+
+  var elsewhere = others.length
+    ? '<div class="note"><b>' + esc(x.name) + ' also owes sessions elsewhere.</b> ' +
+      others.map(function(o){ return o.left + ' from ' + esc(o.x.area); }).join(' &middot; ') +
+      '. The ladders do not compound &mdash; each one reached its own tier on its own count &mdash; ' +
+      'but the sittings do, and that is <b>' +
+      (others.reduce(function(n,o){ return n+o.left; }, s.left)) +
+      '</b> separate afternoons. One student, one session a day.</div>'
+    : '';
+
+  return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="appbar"><a data-go="' + (S.backTo || 'lc') + '">&larr; ' +
+      esc(S.backTo === 'det' ? 'Detention Sessions' : x.area) + '</a><span>&middot;</span>' +
+      '<span>Signed in as ' + esc(S.user) + '</span></div>' +
+    '<div class="date">Booking detention</div>' +
+    '<h1>' + esc(x.name) + '</h1>' +
+    '<div class="who">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) + ' &middot; ' +
+      esc(domainLabel(x.domain)) + ' tier ' + x.tier + '</div>' +
+    '<div class="lede">' + esc(x.action) + '</div>' +
+    '<div class="kpi">' +
+      '<div><b>' + s.x.owed + '</b><span>owed this term</span></div>' +
+      '<div><b>' + s.booked + '</b><span>already booked</span></div>' +
+      '<div><b>' + s.left + '</b><span>to book now</span></div>' +
+      '<div><b>' + chosen.length + '</b><span>chosen</span></div>' +
+    '</div>' + elsewhere + earlierNote +
+    (existing ? '<div class="grouplabel">Sessions already running &mdash; add to one</div>' +
+                '<div class="rows">' + existing + '</div>' : '') +
+    '<div class="grouplabel">Or open a new Wednesday</div><div class="rows">' + newOnes + '</div>' +
+    warn +
+    '<div class="stack rowwise">' +
+      '<button id="dobook"' + ((chosen.length && !S.busy)?'':' disabled') + '>' +
+        (S.busy ? 'Booking&hellip;' : 'Book ' + chosen.length + ' session' + (chosen.length===1?'':'s')) +
+      '</button>' +
+      '<button class="plain" data-go="' + (S.backTo || 'lc') + '">Cancel</button>' +
+    '</div>' +
+    (S.err ? '<div class="note err">' + S.err + '</div>' : '') +
+    '<div class="note q"><b>The slot comes from ⚙️ Config, not from this screen.</b> ' +
+    'One slot runs &mdash; 3.30 to 5.30pm. The 1.30 to 3.30pm slot was retired for 2026; its rows ' +
+    'are kept because they are history. Nothing here sends anything to anybody: the notice is ' +
+    'paper, and it is handed over by the form teacher.</div>' +
+  '</div></div>';
+}
+
+function bookSessions(){
+  var s = S.sched; if (!s) return;
+  var dates = Object.keys(S.pickDates).filter(function(k){ return S.pickDates[k]; });
+  if (!dates.length) return;
+  S.busy = true; S.err = ''; render();
+
+  /* NO RETRY, and hubSchedule is deliberately absent from RETRY_SAFE. A
+     duplicated booking is not a visible error — it is a student sitting a
+     Wednesday they did not owe, found by nobody. If the reply goes missing the
+     honest answer is the one the whole project uses: it may have worked, go
+     and look. */
+  api('hubSchedule', {
+    token: TOKEN,
+    studentId: s.x.id, name: s.x.name, cls: s.x.cls,
+    area: s.x.area, ladder: s.x.domain, tier: s.x.tier,
+    sourceEntryId: s.x.entryId,
+    sessionDates: dates,
+    /* THE NUMBERING IS THE TIER'S, NOT THIS CALL'S. apiHubSchedule_ used to
+       number what it wrote in one go — Session n = rows.length + 1, Session of
+       = dates.length — so booking two of a three-session debt wrote "1 of 2"
+       and "2 of 2", and the third, booked later, started again at "1 of 1".
+       The server now takes these two and falls back to its old behaviour when
+       they are absent, so an older caller is unaffected. */
+    sessionOf: s.x.owed,
+    startAt: s.booked,
+    term: s.x.termNo,
+    by: S.user
+  }).then(function(res){
+    S.busy = false;
+    if (!res || !res.ok){
+      S.err = esc((res && res.error) || 'Nothing was booked.');
+      render(); return;
+    }
+    S.result = { booked: Number(res.booked)||0, clash: (res.clash||[]).length, name: s.x.name };
+    S.pickDates = {};
+    /* RE-READ RATHER THAN GUESS. Mirroring the server's row locally would mean
+       this screen believed something nobody had confirmed, and the mirror
+       would drift the first time apiHubSchedule_ changed a default. */
+    refreshDet().then(function(){ go('booked'); });
+  }).catch(function(e){
+    S.busy = false;
+    S.err = reachErr(e, 'book the detention');
+    render();
+  });
+}
+
+function bookedHtml(){
+  var r = S.result || { booked:0, clash:0, name:'' };
+  var extra = r.clash
+    ? '<div class="note warn"><b>' + r.clash + ' date' + (r.clash===1?' was':'s were') +
+      ' skipped</b> &mdash; ' + esc(r.name) + ' was already in ' + (r.clash===1?'that session':'those sessions') +
+      '. One student, one session a day. Nothing was doubled up.</div>'
+    : '';
+  return '<div class="screen centre"><div class="wrap">' +
+    '<div class="date">' + esc(todayLong()) + '</div>' +
+    '<h1 class="big">' + r.booked + ' session' + (r.booked===1?'':'s') + ' booked.</h1>' +
+    '<div class="lede">Written into 🪑 Detention against the offence that reached the tier, ' +
+      'with your name on it. The paper notice is printed and handed over by the form teacher &mdash; ' +
+      'nothing here sends anything.</div>' + extra +
+    (S.derr ? '<div class="note warn"><b>The booking landed; the list below may be a moment behind.</b> ' +
+              S.derr + '</div>' : '') +
+    '<div class="stack">' +
+      '<button data-go="det">Detention Sessions</button>' +
+      '<button class="ghost" data-go="lc">Back to ' + esc(S.sched ? S.sched.x.area : '') + '</button>' +
+      '<button class="plain" data-go="menu">All areas</button>' +
+    '</div>' +
+  '</div></div>';
+}
+
+/* ── the Detention Sessions area ──────────────────────────────────────── */
+function detHtml(){
+  if (!detOk()){
+    return '<div class="screen centre"><div class="wrap">' +
+      '<div class="appbar"><a data-go="menu">&larr; All areas</a></div>' +
+      '<h1 class="big">🪑 Detention could not be read.</h1>' +
+      '<div class="lede">' + esc((S.det && S.det.error) || 'The tab did not come back with the sign-in.') +
+      ' An unreadable record and an empty one look identical and mean opposite things, so this ' +
+      'screen will not guess which it is.</div>' +
+      '<div class="stack"><button id="detretry">Try again</button>' +
+      '<button class="plain" data-go="menu">All areas</button></div></div></div>';
+  }
+
+  var up = upcoming(), past = pastSessions(), late = overdue();
+  var junk = undated();
+  var toBook = owedBookings(null);
+  var undecided = toBook.filter(function(o){ return o.undecided; });
+
+  var kpi = '<div class="kpi">' +
+    '<div><b>' + up.length + '</b><span>session' + (up.length===1?'':'s') + ' ahead</span></div>' +
+    '<div><b>' + bookedAhead() + '</b><span>sittings booked in</span></div>' +
+    '<div><b>' + late.length + '</b><span>overdue, still owed</span></div>' +
+    '<div><b>' + toBook.reduce(function(n,o){ return n + o.left; }, 0) + '</b><span>owed, not yet booked</span></div>' +
+  '</div>';
+
+  var body = '';
+  if (S.dtab === 'past'){
+    body = past.length
+      ? past.slice().reverse().map(sessionCard).join('')
+      : '<div class="blank">No session date in 🪑 Detention has passed yet.</div>';
+  } else if (S.dtab === 'owed'){
+    body = late.length
+      ? '<div class="note warn"><b>These sittings are still owed.</b> The date has passed &mdash; ' +
+        'the date it was MOVED to, where one was set &mdash; and nobody marked them Attended. ' +
+        'That is derived from the attendance column, not stored, so it carries across a term and ' +
+        'across a year without anybody maintaining it: the twenty students carried from 2025 in ' +
+        'the old book are exactly this shape.</div>' +
+        '<div class="rows">' + late.map(function(d){ return detRowHtml(d, ''); }).join('') + '</div>'
+      : '<div class="blank">Nothing is overdue. Every sitting whose date has passed was marked.</div>';
+    /* AN UNREADABLE DATE IS NOT AN OVERDUE ONE, AND IT IS NOT NOTHING. These
+       rows cannot be placed on the calendar, so they are neither upcoming nor
+       past — and dropping them would mean the import quietly lost sittings.
+       The old workbook's date column is free text, so this is the expected
+       landing place for a real part of it. */
+    if (junk.length){
+      body += '<div class="grouplabel">Dates that could not be read</div>' +
+        '<div class="note warn">' + junk.length + ' row' + (junk.length===1?'':'s') +
+        ' carr' + (junk.length===1?'ies':'y') + ' a session date nothing can parse &mdash; almost ' +
+        'always an imported line. <b>They are not counted as upcoming or as overdue</b>, because ' +
+        'an unreadable date is not evidence of either. Fix the date in 🪑 Detention and they join ' +
+        'the rest.</div>' +
+        '<div class="rows">' + junk.map(function(d){ return detRowHtml(d, ''); }).join('') + '</div>';
+    }
+  } else {
+    body = up.length
+      ? up.map(sessionCard).join('')
+      : '<div class="blank">No sessions are booked. Open an area, go to its Detention tab, ' +
+        'and book from the list of students the ladder says owe sittings.</div>';
+    var bookable = toBook.filter(function(o){ return !o.undecided; });
+    if (bookable.length){
+      body += '<div class="grouplabel">Owed but not yet booked</div>' +
+        '<div class="rows">' + bookable.map(function(o){
+          return '<div class="row ' + sevClass(o.x.tier) + '" data-book="' + esc(rowKey(o.x)) + '">' +
+            '<div class="badge">&#9679;</div>' +
+            '<div class="body"><div class="p">' + esc(o.x.name) + '</div>' +
+            '<div class="meta">' + esc(o.x.cls) + ' &middot; ' + esc(o.x.area) +
+              (homeless(o.x) ? ' <span class="tag thu">no cohort &mdash; only visible here</span>' : '') +
+            '</div>' +
+            '<div class="s">' + lineFor(o.x) + '</div></div>' +
+            '<div class="stats"><div class="stat"><div class="k">To book</div>' +
+              '<div class="v">' + o.left + '</div></div></div>' +
+            '<div class="tierslot"><span class="tag ' + sevClass(o.x.tier) + '">Tier ' + o.x.tier + '</span></div>' +
+            '<div class="rowgo opn" title="Book ' + esc(o.x.name) + '">' +
+              '<span class="lbl">Book</span><span class="chev">&rarr;</span></div>' +
+          '</div>';
+        }).join('') + '</div>';
+    }
+    /* A TIER WHOSE SESSION COUNT NOBODY HAS SET. Not bookable, because the
+       answer is not "zero" — it is "nobody has written one down". 🪜 Ladders
+       is the rulebook and a blank cell there is a question, not a policy. */
+    if (undecided.length){
+      body += '<div class="grouplabel">No session count set on the ladder</div>' +
+        '<div class="note warn"><b>These tiers have an empty <i>Detention sessions</i> cell in ' +
+        '🪜 Ladders.</b> Blank is not zero &mdash; zero is a decision that this tier owes no ' +
+        'detention, blank means nobody has written one down. They are not offered for booking, ' +
+        'and they will keep appearing here until somebody types a number, including a 0.</div>' +
+        '<div class="rows">' + undecided.map(function(o){
+          return '<div class="row flat"><div class="badge">?</div>' +
+            '<div class="body"><div class="p">' + esc(o.x.name) + '</div>' +
+            '<div class="meta">' + esc(o.x.cls) + ' &middot; ' + esc(o.x.area) + '</div>' +
+            '<div class="s">' + esc(o.x.domain) + ' tier ' + o.x.tier + ' &mdash; ' + esc(o.x.action) + '</div></div>' +
+            '<div class="tierslot"><span class="tag quiet">Not set</span></div></div>';
+        }).join('') + '</div>';
+    }
+  }
+
+  return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="appbar"><a data-go="menu">&larr; All areas</a><span>&middot;</span>' +
+      '<span>Signed in as ' + esc(S.user) + '</span></div>' +
+    '<div class="date">Detention Sessions ' + builtHtml() + '</div>' +
+    '<h1>The Wednesday room</h1>' +
+    '<div class="lede">A session is not a record somebody owns &mdash; it is every row sharing a ' +
+      'date. Several people book into the same afternoon from different areas, and whoever is on ' +
+      'duty marks everyone in it.</div>' +
+    kpi +
+    '<div class="tabs">' +
+      '<a class="' + (S.dtab==='next'?'on':'') + '" data-dtab="next">Coming up</a>' +
+      '<a class="' + (S.dtab==='past'?'on':'') + '" data-dtab="past">Sessions held</a>' +
+      '<a class="' + (S.dtab==='owed'?'on':'') + '" data-dtab="owed">Still owed' +
+        (late.length ? ' (' + late.length + ')' : '') + '</a>' +
+    '</div>' + body +
+  '</div></div>';
+}
+
+function sessionCard(s){
+  var byArea = {};
+  s.room.forEach(function(d){ byArea[d.area] = (byArea[d.area]||0) + 1; });
+  var areas = Object.keys(byArea).sort().map(function(a){
+    return '<span class="tchip">' + esc(a) + ' <b>' + byArea[a] + '</b></span>';
+  }).join('');
+  var unmarked = s.room.filter(function(d){ return !d.att; }).length;
+  var slotNames = Object.keys(s.slots);
+  return '<div class="lcard' + (unmarked ? ' t3' : '') + '" style="margin-bottom:10px">' +
+    '<div class="lctop"><div class="lcname">' + esc(longish(s.date)) + '</div>' +
+      '<span class="tag ' + (unmarked ? 't3' : 'ok') + '">' +
+        (unmarked ? unmarked + ' not marked' : 'All marked') + '</span></div>' +
+    '<div class="s" style="margin-top:6px">' + s.room.length + ' student' + (s.room.length===1?'':'s') +
+      (areas ? ' &mdash; ' + areas : '') + '</div>' +
+    /* THE SESSION DATE IS THE JOIN KEY, by design, so two sittings on one date
+       are one room. That is right for 2026, where a single slot runs — but the
+       retired 1.30–3.30pm slot ran CONCURRENTLY with 3.30–5.30pm before it, so
+       an imported date can hold two genuinely separate sittings. Grouped, and
+       said out loud, rather than silently merged. */
+    (slotNames.length > 1
+      ? '<div class="s" style="margin-top:4px"><b>Two slots on this date:</b> ' +
+        esc(slotNames.map(function(n){ return n + ' (' + s.slots[n] + ')'; }).join(' · ')) +
+        ' &mdash; the 1.30pm slot is retired, so these are historical.</div>'
+      : '') +
+    '<div class="stack rowwise" style="margin-top:14px">' +
+      '<button class="ghost sm" data-sess="' + esc(s.date) + '">' +
+        (unmarked ? 'Take attendance' : 'Open the session') + '</button></div>' +
+  '</div>';
+}
+
+/* ── one session, and taking attendance ───────────────────────────────── */
+function sessHtml(){
+  var date = S.sess;
+  var room = roomFor(date);
+  if (!room.length) return detHtml();
+  var when = dparse(date);
+  var future = when && when > midnight();
+
+  var rows = room.map(function(d){
+    var draft = draftFor(d);
+    var needsDate = draft.att && draft.att !== ATT_OK;
+    var dirty = (draft.att !== (d.att||'')) || (draft.moved !== (d.moved||''));
+    var opts = (S.det.attendanceOptions || [ATT_OK]).map(function(o){
+      return '<option value="' + esc(o) + '"' + (draft.att===o?' selected':'') + '>' + esc(o) + '</option>';
+    }).join('');
+    return '<div class="row flat" style="align-items:flex-start">' +
+      '<div class="badge">' + (d.att === ATT_OK ? '&#10003;' : '&#9679;') + '</div>' +
+      '<div class="body"><div class="p">' + esc(d.name) + '</div>' +
+      '<div class="meta">' + esc(d.cls) + ' &middot; ' + esc(d.area) +
+        (d.of ? ' &middot; session ' + d.n + ' of ' + d.of : '') +
+        (movedInto(d, date) ? ' <span class="tag thu">moved from ' + esc(d.date) + '</span>' : '') +
+      '</div>' +
+      '<div class="s">' + esc(d.ladder) + (d.tier ? ' tier ' + esc(d.tier) : '') +
+        ' &middot; issued by ' + esc(d.by || 'somebody') + '</div>' +
+      '<div class="field" style="margin-top:12px;max-width:100%">' +
+        '<label>Attendance</label>' +
+        '<select data-att="' + esc(d.did) + '" style="font:inherit;font-size:16px;padding:8px 10px;' +
+          'border:1.5px solid var(--line);border-radius:9px;background:var(--raised);color:var(--ink)">' +
+          '<option value=""' + (draft.att?'':' selected') + '>&mdash; not marked &mdash;</option>' +
+          opts + '</select>' +
+        (needsDate
+          ? '<div style="margin-top:10px"><label>Move it to</label>' +
+            '<input type="text" data-moved="' + esc(d.did) + '" value="' + esc(draft.moved) + '" ' +
+            'placeholder="e.g. ' + esc(dstamp(nextWeds(2)[1])) + '" ' +
+            'style="font-size:16px;border-bottom:2px solid var(--line)"></div>' +
+            '<div class="s" style="margin-top:6px">Only <b>Attended</b> closes a session. ' +
+            'Everything else leaves it owed, and needs a date to move it to &mdash; otherwise it ' +
+            'would quietly stop being owed at all.</div>'
+          : '') +
+      '</div>' +
+      '</div>' +
+      /* THE SAVE CONTROL IS ALWAYS RENDERED, disabled until something has
+         actually changed. It used to appear only when `dirty`, computed at
+         render time — and the reschedule-date field deliberately does not
+         re-render on every keystroke, so a row whose ONLY change was the date
+         never grew a button to save it. */
+      '<div class="tierslot">' +
+        '<button class="ghost sm" data-save="' + esc(d.did) + '"' +
+          ((dirty && !S.busy) ? '' : ' disabled') + '>' +
+          (S.busy ? 'Saving&hellip;' : 'Save this one') + '</button>' +
+        (d.att
+          ? '<div class="d"><span class="tag ' + (d.att===ATT_OK?'ok':'t4') + '">' + esc(d.att) + '</span>' +
+            ' <a data-clear="' + esc(d.did) + '" style="cursor:pointer;text-decoration:underline">clear</a></div>'
+          : '<div class="d"><span class="tag quiet">Not marked</span></div>') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="appbar"><a data-go="det">&larr; Detention Sessions</a><span>&middot;</span>' +
+      '<span>Signed in as ' + esc(S.user) + '</span></div>' +
+    '<div class="date">' + esc(room[0].slot || 'Detention') + '</div>' +
+    '<h1>' + esc(longish(date)) + '</h1>' +
+    '<div class="who">' + room.length + ' student' + (room.length===1?'':'s') +
+      ' &middot; ' + room.filter(isOwed).length + ' still owed</div>' +
+    (future
+      ? '<div class="note q"><b>This session has not happened yet.</b> You can mark it, but ' +
+        'a room marked in advance is a room nobody checked.</div>'
+      : '') +
+    '<div class="rows">' + rows + '</div>' +
+    (S.err ? '<div class="note err">' + S.err + '</div>' : '') +
+    /* A WRITE THAT LANDED AND A RE-READ THAT DID NOT. This was rendered on the
+       booking confirmation and nowhere else, so on this screen a successful
+       save whose follow-up read failed showed the PRE-SAVE value with no
+       explanation and no retry — and since the re-read now gets three
+       attempts, reaching that state means a genuinely bad connection, which
+       is exactly when somebody will hit it. */
+    (S.derr ? '<div class="note warn"><b>The save landed &mdash; this list may be a moment behind.</b> ' +
+              S.derr + ' <b>Do not simply save it again</b> without looking; ' +
+              'reopen the session first.</div>' : '') +
+    '<div class="note"><b>Each row saves on its own.</b> Attendance is written one student at a ' +
+    'time, and a save that fails leaves the others exactly as they were. Nothing here is ' +
+    'retried &mdash; if a reply goes missing, reopen the session and look before saving again.</div>' +
+  '</div></div>';
+}
+
+/* THE ONE PLACE A DRAFT IS SEEDED. There were two, and they disagreed: the
+   render seeded from the sheet's value, the date-field handler seeded from an
+   empty string. So correcting a reschedule date and then touching any other
+   row in the room — the normal thing to do in a room of eight — left the first
+   row displaying "not marked" for a student the sheet recorded as Absent, with
+   the date field gone. Whoever then cleared the unmarked rows would pick
+   something, and picking Attended closes a sitting that is still owed AND
+   wipes its reschedule date. */
+function draftFor(d){
+  if (!S.attDraft[d.did]) S.attDraft[d.did] = { att: d.att || '', moved: d.moved || '' };
+  return S.attDraft[d.did];
+}
+
+function saveAttendance(did){
+  var d = null;
+  detRows().forEach(function(r){ if (r.did === did) d = r; });
+  if (!d) return;
+  var draft = S.attDraft[did] || { att:'', moved:'' };
+  if (!draft.att){ S.err = 'Choose an attendance value first, or use <b>clear</b>.'; render(); return; }
+  var moved = '';
+  if (draft.att !== ATT_OK){
+    var raw = String(draft.moved||'').trim();
+    if (!raw){
+      S.err = 'Only <b>Attended</b> closes a session. Anything else needs a date to move it to, ' +
+              'or the sitting would quietly stop being owed.';
+      render(); return;
+    }
+    /* NORMALISED BEFORE IT IS SENT, NEVER STORED AS TYPED. The session date is
+       the join key — a session is every row sharing that string — so "26 Aug"
+       would have created a phantom room by that name, permanently disjoint
+       from the real 26 August one and rendered with a different label. */
+    moved = canonDate(raw);
+    if (!moved){
+      S.err = 'That date could not be read. Type it as <b>' + esc(dstamp(nextWeds(2)[1])) +
+              '</b> &mdash; the session date is what joins a room together, so it has to be ' +
+              'exact. Nothing was saved.';
+      render(); return;
+    }
+  }
+  S.busy = true; S.err = ''; render();
+
+  /* NO RETRY. hubAttendance is a write, and it is absent from RETRY_SAFE for
+     the same reason every other write is. */
+  api('hubAttendance', {
+    token: TOKEN, detentionId: did,
+    attendance: draft.att,
+    rescheduledTo: moved
+  }).then(function(res){
+    S.busy = false;
+    if (!res || !res.ok){ S.err = esc((res && res.error) || 'Nothing was saved.'); render(); return; }
+    delete S.attDraft[did];
+    refreshDet().then(function(){ render(); });
+  }).catch(function(e){
+    S.busy = false;
+    S.err = reachErr(e, 'save the attendance');
+    render();
+  });
+}
+
+/* THE ONLY RE-READ IN THIS FILE. hubDetention went back into RETRY_SAFE for
+   it — it is a read, it changes nothing, and giving up after one attempt on a
+   fault that is known to be collision would leave the screen showing a room
+   that no longer matches the sheet. */
+/* CLEARING A MISKEYED OUTCOME. Without this a wrong value could be changed to
+   another wrong value but never removed — client and server both refused the
+   empty string, so the only escape from a mistaken "Absent" was to mark it
+   Attended, which closes a sitting that is still owed. That is precisely the
+   defect the old workbook has, where a waived detention was typed into the
+   attendance column and is now indistinguishable from a real one. */
+function clearAttendance(did){
+  S.busy = true; S.err = ''; render();
+  api('hubAttendance', { token: TOKEN, detentionId: did, attendance: '', rescheduledTo: '' })
+    .then(function(res){
+      S.busy = false;
+      if (!res || !res.ok){ S.err = esc((res && res.error) || 'Nothing was cleared.'); render(); return; }
+      delete S.attDraft[did];
+      refreshDet().then(function(){ render(); });
+    }).catch(function(e){
+      S.busy = false; S.err = reachErr(e, 'clear the attendance'); render();
+    });
+}
+
+function refreshDet(){
+  S.derr = '';
+  return api('hubDetention', { token: TOKEN }).then(function(res){
+    if (res && res.ok) S.det = res;
+    else S.derr = esc((res && res.error) || 'The record could not be re-read.');
+  }).catch(function(e){
+    S.derr = reachErr(e, 're-read 🪑 Detention');
+  });
+}
+
 function picked(){
-  return worklist(S.area).filter(function(x){ return S.sel[x.entryId] && !isStamped(x); });
+  return worklist(S.area).filter(function(x){ return S.sel[rowKey(x)] && !isStamped(x); });
 }
 
 /* THE EMAIL IS TWO DIFFERENT SENTENCES, so it is two different blocks.
@@ -3335,7 +4484,7 @@ function wire(){
     if (!S.teachers) loadTeachers();
   });
   if ($('all')) $('all').addEventListener('click', function(){
-    worklist(S.area).forEach(function(x){ if (!isStamped(x)) S.sel[x.entryId]=true; }); render();
+    worklist(S.area).forEach(function(x){ if (!isStamped(x)) S.sel[rowKey(x)]=true; }); render();
   });
   if ($('none')) $('none').addEventListener('click', function(){ S.sel={}; render(); });
   if ($('record')) $('record').addEventListener('click', record);
@@ -3352,6 +4501,39 @@ function wire(){
     loadGrooming().then(function(){ S.pending.groom = false; render(true); });
   });
   if ($('cancelask')) $('cancelask').addEventListener('click', function(){ S.ask=null; S.err=''; render(); });
+  if ($('dobook')) $('dobook').addEventListener('click', bookSessions);
+  if ($('detretry')) $('detretry').addEventListener('click', function(){
+    S.busy = true; render();
+    refreshDet().then(function(){ S.busy = false; render(true); });
+  });
+  /* THE SELECTS AND THE DATE FIELDS ON THE ATTENDANCE SCREEN. They write into
+     S.attDraft rather than straight to the server, so a half-made decision —
+     "Absent" chosen, no reschedule date typed yet — cannot reach the sheet.
+     A change event redraws, because choosing anything other than Attended has
+     to make the date field appear. */
+  Array.prototype.forEach.call(v.querySelectorAll('[data-att]'), function(el){
+    el.addEventListener('change', function(){
+      var id = el.getAttribute('data-att');
+      if (!S.attDraft[id]) S.attDraft[id] = { att:'', moved:'' };
+      S.attDraft[id].att = el.value;
+      if (el.value === ATT_OK) S.attDraft[id].moved = '';
+      S.err = ''; render();
+    });
+  });
+  Array.prototype.forEach.call(v.querySelectorAll('[data-moved]'), function(el){
+    /* INPUT, NOT CHANGE, and no render — a redraw on every keystroke would
+       take the caret with it. The draft is kept in step; the screen is not
+       rebuilt until something else asks for it. The draft is SEEDED, not
+       replaced: writing { att:'' } here is what made a marked row read as
+       unmarked after any unrelated redraw. */
+    el.addEventListener('input', function(){
+      var id = el.getAttribute('data-moved');
+      if (!S.attDraft[id]) S.attDraft[id] = { att:'', moved:'' };
+      S.attDraft[id].moved = el.value;
+      var btn = v.querySelector('[data-save="' + id + '"]');
+      if (btn) btn.disabled = !!S.busy;
+    });
+  });
   if ($('reason')) $('reason').focus();
   if ($('copyaddr')) $('copyaddr').addEventListener('click', function(){
     copy(recipients().list.map(function(p){ return p.email; }).join('; '), this); });
@@ -3425,11 +4607,42 @@ function wire(){
     var gtab = t.closest && t.closest('[data-gtab]');
     if (gtab){ S.gtab = gtab.getAttribute('data-gtab'); render(); return; }
 
+    /* DETENTION, ALL FOUR ENTRY POINTS — before [data-area], because a booking
+       row inside the Detention Sessions screen sits in a list and must not be
+       read as a menu row. */
+    var dtab = t.closest && t.closest('[data-dtab]');
+    if (dtab){ S.dtab = dtab.getAttribute('data-dtab'); render(); return; }
+
+    var save = t.closest && t.closest('[data-save]');
+    if (save){ e.stopPropagation(); saveAttendance(save.getAttribute('data-save')); return; }
+
+    var clr = t.closest && t.closest('[data-clear]');
+    if (clr){ e.stopPropagation(); clearAttendance(clr.getAttribute('data-clear')); return; }
+
+    var sess = t.closest && t.closest('[data-sess]');
+    if (sess){ S.attDraft = {}; S.err=''; go('sess', { sess: sess.getAttribute('data-sess') }); return; }
+
+    var book = t.closest && t.closest('[data-book]');
+    if (book){ e.stopPropagation(); openBooking(book.getAttribute('data-book')); return; }
+
+    /* A DATE TILE ON THE BOOKING SCREEN. Toggled in S rather than on the
+       element, unlike the worklist's [data-pick] — the chosen count appears in
+       four places on that screen, including the button's own label, so a
+       redraw is the honest way to keep them in step. The list is a dozen rows,
+       not four hundred, so the redraw costs nothing. */
+    var dt = t.closest && t.closest('[data-date]');
+    if (dt){
+      var key2 = dt.getAttribute('data-date');
+      if (S.pickDates[key2]) delete S.pickDates[key2]; else S.pickDates[key2] = true;
+      S.err = ''; render(); return;
+    }
+
     var area = t.closest && t.closest('[data-area]');
     if (area){
       var key = area.getAttribute('data-area');
       if (key === '__early'){ go('early'); return; }
       if (key === '__groom'){ ensureGrooming(); go('groom'); return; }
+      if (key === '__det'){ S.dtab = 'next'; go('det'); return; }
       var a = areaOf(key);
       if (a && a.built) openArea(key); else go('soon');
       return;

@@ -1975,9 +1975,24 @@ function loadHistory(id){
   return api('hubHistory', { token: TOKEN, studentId: id }).then(function(res){
     S.hLoading = false;
     if (!res || !res.ok){ S.hErr = (res && res.error) || 'The history could not be read.'; render(); return; }
-    S.history = res; render();
-  }).catch(function(){
-    S.hLoading = false; S.hErr = 'Could not reach the server.'; render();
+    S.history = res;
+    /* RENDER OUTSIDE THE PROMISE. This used to be `S.history = res; render();`
+       INSIDE the then, so a throw while drawing the year chart landed in the
+       catch below and was reported as a connection failure. A broken chart and
+       a dead server then looked identical from the outside, which is exactly
+       the position this page was in on 12 August 2026 — the reply had arrived
+       and the screen said it had not. Now a render fault surfaces as a real
+       error in the console and the catch only ever means what it says. */
+    setTimeout(render, 0);
+  }).catch(function(e){
+    S.hLoading = false;
+    /* SAYS WHICH OF THE TWO HAPPENED. Every other loader in this file uses
+       reachErr; this one said "Could not reach the server." for a lost reply,
+       a real server error and a dead connection alike — three different faults
+       with three different answers, reported as one sentence that fitted only
+       the last of them. */
+    S.hErr = reachErr(e, 'read this student\'s record for the year');
+    render();
   });
 }
 
@@ -4700,9 +4715,9 @@ function loadTeachers(){
       S.tErr = (res && res.error) || 'The class teachers could not be read.';
     }
     render();
-  }).catch(function(){
+  }).catch(function(e){
     S.tLoading = false; S.teachers = null;
-    S.tErr = 'Could not reach the server to read the class teachers.';
+    S.tErr = reachErr(e, 'read the class teachers');
     render();
   });
 }

@@ -1086,6 +1086,24 @@ function toSchedule(key){
            undecided: list.filter(function(o){ return o.undecided; }).length };
 }
 
+/* THE RUNG'S SENTENCE, WITH THE SITTINGS ON THE END.
+   Added 12 August 2026, when the seed stopped naming a session count in its
+   own prose. It used to read "Student to see the DP · 2 detention sessions"
+   beside a Sessions column that also said 2 — one number in two places, and
+   the round that brought the ladders into line with the written SOP would
+   have made them disagree. The column is the number now; this puts it back
+   into the sentence at the moment of drawing it, so the two cannot part.
+
+   A BLANK COUNT ADDS NOTHING, and that is deliberate: null means nobody has
+   decided what this tier owes, and inventing "0 detention sessions" for it
+   would state a decision that has not been taken. */
+function actionOf(action, sessions){
+  var a = String(action || '');
+  if (sessions === null || sessions === undefined || sessions === '' || !Number(sessions)) return a;
+  var n = Number(sessions);
+  return a + (a ? ' · ' : '') + n + ' detention session' + (n === 1 ? '' : 's');
+}
+
 function sevClass(t){ return t>=5?'t5':t===4?'t4':t===3?'t3':t>=1?'t2':''; }
 
 /* WHAT A DOMAIN IS CALLED IN A SENTENCE. ⚙️ Statuses carries the label, so
@@ -1813,7 +1831,7 @@ function lcRow(x, i){
       /* A one-rung ladder has no tiers to compare, so a "Tier 1" beside a
          count of 3 Thursdays reads as a contradiction. Name the thing. */
       (thu ? 'Privilege removal' : 'Tier ' + x.tier) + '</span>' +
-      '<div class="d">' + esc(x.action) + '</div></div>' +
+      '<div class="d">' + esc(actionOf(x.action, x.owed === null ? x.sessions : x.owed)) + '</div></div>' +
     goHtml(x) + '</div>';
 }
 
@@ -1877,7 +1895,7 @@ function legendFor(domain){
     L.map(function(l){
       var t = Number(l.tier)||0;
       return '<div class="li"><b class="' + sevClass(t) + '">Tier ' + t + '</b>' +
-        '<span>' + esc(l.action || '') + '</span></div>';
+        '<span>' + esc(actionOf(l.action, l.sessions)) + '</span></div>';
     }).join('') + '</div>';
 }
 function legendHtml(key){
@@ -2343,7 +2361,7 @@ function ladderTableHtml(x){
       return '<tr class="' + (here?'here ':'') + sevClass(t) + '">' +
         '<td style="width:96px;white-space:nowrap"><span class="tag ' + sevClass(t) + '">Tier ' + t + '</span></td>' +
         '<td style="width:56px" class="n">' + esc(l.atCount !== undefined ? l.atCount : '') + '</td>' +
-        '<td>' + esc(l.action || '') + '</td></tr>';
+        '<td>' + esc(actionOf(l.action, l.sessions)) + '</td></tr>';
     }).join('') + '</tbody></table>';
 }
 
@@ -2442,7 +2460,7 @@ function studentHtml(){
           (r.sessions ? '<div><b>' + r.sessions + '</b><span>detention' +
              (r.sessions===1?'':'s') + ' owed</span></div>' : '') +
         '</div>' +
-        '<div class="lcact">' + esc(r.action) + '</div>' +
+        '<div class="lcact">' + esc(actionOf(r.action, r.sessions)) + '</div>' +
         (heldNow(r) ? '<div class="lchold">⏸ follow-up on hold</div>' : '') +
       '</div>';
     }).join('') + '</div>' +
@@ -3367,7 +3385,7 @@ function lcDetHtml(key){
           '<div class="stat"><div class="k">To book</div><div class="v">' + o.left + '</div></div>' +
         '</div>' +
         '<div class="tierslot"><span class="tag ' + cls + '">Tier ' + o.x.tier + '</span>' +
-          '<div class="d">' + esc(o.x.action) + '</div></div>' +
+          '<div class="d">' + esc(actionOf(o.x.action, o.x.owed)) + '</div></div>' +
         '<div class="rowgo opn" title="Book ' + esc(o.x.name) + '">' +
           '<span class="lbl">Book</span><span class="chev">&rarr;</span></div>' +
       '</div>';
@@ -3553,7 +3571,7 @@ function schedHtml(){
     '<h1>' + esc(x.name) + '</h1>' +
     '<div class="who">' + esc(x.cls) + ' &middot; ' + esc(x.cohort) + ' &middot; ' +
       esc(domainLabel(x.domain)) + ' tier ' + x.tier + '</div>' +
-    '<div class="lede">' + esc(x.action) + '</div>' +
+    '<div class="lede">' + esc(actionOf(x.action, x.owed)) + '</div>' +
     '<div class="kpi">' +
       '<div><b>' + s.x.owed + '</b><span>owed this term</span></div>' +
       '<div><b>' + s.booked + '</b><span>already booked</span></div>' +
@@ -3747,10 +3765,16 @@ function detHtml(){
     '<div class="appbar"><a data-go="menu">&larr; All areas</a><span>&middot;</span>' +
       '<span>Signed in as ' + esc(S.user) + '</span></div>' +
     '<div class="date">Detention Sessions ' + builtHtml() + '</div>' +
-    '<h1>The Wednesday room</h1>' +
-    '<div class="lede">A session is not a record somebody owns &mdash; it is every row sharing a ' +
-      'date. Several people book into the same afternoon from different areas, and whoever is on ' +
-      'duty marks everyone in it.</div>' +
+    '<h1>Detention Sessions</h1>' +
+    /* PLAIN. The first version explained the data model — "a session is not a
+       record somebody owns, it is every row sharing a date" — which is true,
+       is the reason the code is shaped the way it is, and is of no use to
+       somebody who opened this screen to find out who needs booking. It lives
+       in the comments and on the 🪑 Detention tab note, where the people who
+       need it will be. Kim, 12 August 2026: "the description is so
+       unnecessary." */
+    '<div class="lede">Keep track of detention sessions &mdash; who is booked into each afternoon, ' +
+      'who still needs scheduling, and who has not served what they owe.</div>' +
     kpi +
     '<div class="tabs">' +
       '<a class="' + (S.dtab==='next'?'on':'') + '" data-dtab="next">Coming up</a>' +
@@ -4186,7 +4210,10 @@ function emailBody(){
         lines.push(x.name + '  |  ' + x.cls + '  |  ' + x.term + ' this term (' + x.year + ' this year)' +
                    '  |  Tier ' + x.tier);
         lines.push('    Dates: ' + (shortDates(x.dates) || '—'));
-        lines.push('    ' + x.action);
+        /* THE EMAIL SAYS THE NUMBER TOO. This is the sentence a form teacher
+           reads and acts on, so losing the sitting count here would be the
+           most expensive place to lose it. */
+        lines.push('    ' + actionOf(x.action, x.owed === null ? x.sessions : x.owed));
       }
       lines.push('');
     });

@@ -271,6 +271,31 @@ h2{font-size:24px;margin-bottom:4px}
 .kpi em{display:block;margin-top:8px;font-style:normal;font-size:11px;line-height:1.55;
   color:var(--muted);opacity:.85}
 .note.quiet{font-size:12px;opacity:.8}
+.printhead{display:none}
+.tabs a b{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:9px;
+  background:var(--line);font-size:11px;font-weight:600;vertical-align:1px}
+
+/* ── PAPER ─────────────────────────────────────────────────────────────
+   The register, and nothing else. A printed page that carries the app's
+   navigation, its explanatory notes and its buttons is a screenshot; what the
+   duty teacher needs is a list of names with room to write beside them. */
+@media print{
+  .noprint,.appbar,.tabs,.kpi,.lede,.date,.note,.stack,.blank,.grouplabel,
+  select,button{display:none!important}
+  .printhead{display:block!important;font-size:15px;font-weight:700;
+    margin:0 0 14px;padding-bottom:8px;border-bottom:2px solid #000}
+  body,.screen,.wrap{background:#fff!important;color:#000!important;
+    margin:0!important;padding:0!important;max-width:none!important}
+  .row{break-inside:avoid;page-break-inside:avoid;border-bottom:1px solid #999;
+    padding:9px 0;display:flex;gap:12px;align-items:baseline}
+  .row .p{font-size:13px;font-weight:600}
+  .row .meta,.row .s{font-size:11px;color:#333!important}
+  .badge{display:none!important}
+  /* Somewhere to write the answer, since paper has no dropdown. */
+  .row::after{content:'';display:block;margin-left:auto;width:150px;
+    border-bottom:1px solid #000;align-self:flex-end}
+  @page{margin:14mm}
+}
 .viz{margin:16px 0 26px}
 .vrow{margin-bottom:17px}
 .vtop{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:6px}
@@ -3819,12 +3844,16 @@ function detHtml(){
         'the rest.</div>' +
         '<div class="rows">' + junk.map(function(d){ return detRowHtml(d, ''); }).join('') + '</div>';
     }
-  } else {
+  } else if (S.dtab === 'next'){
     body = up.length
       ? up.map(sessionCard).join('')
-      : '<div class="blank">No sessions are booked. Open an area, go to its Detention tab, ' +
-        'and book from the list of students the ladder says owe sittings.</div>';
+      : '<div class="blank">Nothing is booked yet. Go to <b>To book</b> and put somebody ' +
+        'into a Wednesday.</div>';
+  } else {
     var bookable = toBook.filter(function(o){ return !o.undecided; });
+    if (!bookable.length && !undecided.length){
+      body = '<div class="blank">Nobody is owed a sitting that has not been booked.</div>';
+    }
     if (bookable.length){
       body += '<div class="grouplabel">Owed but not yet booked</div>' +
         '<div class="rows">' + bookable.map(function(o){
@@ -3877,10 +3906,18 @@ function detHtml(){
     '<div class="lede">Keep track of detention sessions &mdash; who is booked into each afternoon, ' +
       'who still needs scheduling, and who has not served what they owe.</div>' +
     kpi +
+    /* THE TABS CARRY THE NUMBERS THAT ARE ABOVE THEM. Until 12 August 2026 the
+       row read "sittings to book · sittings booked · to chase" and the tabs
+       read "Coming up · Sessions held · Still owed" — the same three things
+       under two different names, in a different order, so every glance needed a
+       translation step. The tab you click is now the figure you just read. */
     '<div class="tabs">' +
-      '<a class="' + (S.dtab==='next'?'on':'') + '" data-dtab="next">Coming up</a>' +
-      '<a class="' + (S.dtab==='past'?'on':'') + '" data-dtab="past">Sessions held</a>' +
-      '<a class="' + (S.dtab==='owed'?'on':'') + '" data-dtab="owed">Still owed' +
+      '<a class="' + (S.dtab==='book'?'on':'') + '" data-dtab="book">To book' +
+        (toBook.length ? ' <b>' + sitOf(toBook) + '</b>' : '') + '</a>' +
+      '<a class="' + (S.dtab==='next'?'on':'') + '" data-dtab="next">Coming up' +
+        (bookedAhead() ? ' <b>' + bookedAhead() + '</b>' : '') + '</a>' +
+      '<a class="' + (S.dtab==='past'?'on':'') + '" data-dtab="past">Held</a>' +
+      '<a class="' + (S.dtab==='owed'?'on':'') + '" data-dtab="owed">To chase' +
         (late.length ? ' (' + late.length + ')' : '') + '</a>' +
     '</div>' + body +
   '</div></div>';
@@ -3910,9 +3947,16 @@ function sessionCard(s){
         esc(slotNames.map(function(n){ return n + ' (' + s.slots[n] + ')'; }).join(' · ')) +
         ' &mdash; the 1.30pm slot is retired, so these are historical.</div>'
       : '') +
+    /* THE ACTION THE DATE ACTUALLY ALLOWS. A Wednesday still ahead is a room
+       to fill; one that has been and gone is a register to mark. Offering both
+       on both made the card read as a menu rather than a next step. */
     '<div class="stack rowwise" style="margin-top:14px">' +
-      '<button class="ghost sm" data-sess="' + esc(s.date) + '">' +
-        (unmarked ? 'Take attendance' : 'Open the session') + '</button></div>' +
+      (s.when && s.when > midnight()
+        ? '<button class="ghost sm" data-dtab="book">Book students in</button>' +
+          '<button class="plain sm" data-sess="' + esc(s.date) + '">Open the session</button>'
+        : '<button class="ghost sm" data-sess="' + esc(s.date) + '">' +
+          (unmarked ? 'Take attendance' : 'Open the session') + '</button>') +
+    '</div>' +
   '</div>';
 }
 
@@ -3974,11 +4018,25 @@ function sessHtml(){
     '</div>';
   }).join('');
 
-  return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
-    '<div class="appbar"><a data-go="det">&larr; Detention Sessions</a><span>&middot;</span>' +
+  /* THE ROOM LIST ON PAPER. The person on duty in C201 may not be the person
+     who booked it, may not have the Hub open, and may not have a device at
+     all — this system already accepts that fifty-eight form teachers check
+     grooming off a printed namelist, and a detention room is no different.
+     Everything but the register is hidden by the print stylesheet, so the
+     button produces a page somebody can carry, not a screenshot of an app. */
+  var printBar =
+    '<div class="stack rowwise noprint" style="margin:2px 0 18px">' +
+      '<button class="plain sm" onclick="window.print()">🖨 Print the room list</button>' +
+    '</div>';
+
+  return '<div class="screen' + (S.first?'':' still') + ' printable"><div class="wrap wide">' +
+    '<div class="printhead">' + esc(longish(date)) +
+      ' &mdash; ' + esc((S.snap && S.snap.config && S.snap.config.detentionRoom) || '') +
+      ' &mdash; ' + room.length + ' student' + (room.length===1?'':'s') + '</div>' +
+    '<div class="appbar noprint"><a data-go="det">&larr; Detention Sessions</a><span>&middot;</span>' +
       '<span>Signed in as ' + esc(S.user) + '</span></div>' +
     '<div class="date">' + esc(room[0].slot || 'Detention') + '</div>' +
-    '<h1>' + esc(longish(date)) + '</h1>' +
+    '<h1 class="noprint">' + esc(longish(date)) + '</h1>' + printBar +
     '<div class="who">' + room.length + ' student' + (room.length===1?'':'s') +
       ' &middot; ' + room.filter(isOwed).length + ' still owed</div>' +
     (future

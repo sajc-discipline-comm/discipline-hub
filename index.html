@@ -267,6 +267,10 @@ h2{font-size:24px;margin-bottom:4px}
   font-variation-settings:'opsz' 60,'SOFT' 30,'WONK' 1;font-weight:600;
   font-size:41px;line-height:1;letter-spacing:-.02em}
 .kpi span{display:block;font-size:12px;color:var(--muted);margin-top:7px;letter-spacing:.02em}
+.kpi div{min-width:150px}
+.kpi em{display:block;margin-top:8px;font-style:normal;font-size:11px;line-height:1.55;
+  color:var(--muted);opacity:.85}
+.note.quiet{font-size:12px;opacity:.8}
 .viz{margin:16px 0 26px}
 .vrow{margin-bottom:17px}
 .vtop{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:6px}
@@ -3724,15 +3728,68 @@ function detHtml(){
   var toBook = owedBookings(null);
   var undecided = toBook.filter(function(o){ return o.undecided; });
 
-  var kpi = '<div class="kpi">' +
-    '<div><b>' + up.length + '</b><span>session' + (up.length===1?'':'s') + ' ahead</span></div>' +
-    '<div><b>' + bookedAhead() + '</b><span>sittings booked in</span></div>' +
-    '<div><b>' + late.length + '</b><span>overdue, still owed</span></div>' +
+  /* ONE UNIT, ONE ORDER, ONE JOURNEY.
+     Rewritten 12 August 2026. This row read "5 sessions ahead · 10 sittings
+     booked in · 89 overdue · 231 imported · 119 owed" — five figures in four
+     different units, in no particular sequence, and Kim: "i am now struggling
+     to understand the differences in all the nuances."
+
+     Everything below is counted in SITTINGS, in the order a sitting travels:
+     owed, then booked, then chased. Wednesdays became a subtitle, because a
+     date is not a unit of work. The number of STUDENTS sits beside the number
+     of sittings, because those answer different questions and both get asked.
+
+     THE TERM SPLIT IS THE POINT. 119 as one figure reads as a crisis. Split
+     into this term and everything before it, it reads as a small piece of work
+     and a known backlog — which is what it is. The backlog exists because the
+     system logged offences for three months before there was any way to book
+     against them, while the old book was doing the booking the whole time. */
+  var sitOf = function(l){ return l.reduce(function(n,o){ return n + o.left; }, 0); };
+  var stuOf = function(l){ var s={}; l.forEach(function(o){ s[o.x.id]=1; }); return Object.keys(s).length; };
+
+  var nowTerm = String((S.early && S.early.termNo) || '').trim();
+  if (!nowTerm){
+    /* No early-dismissal reply to ask, so take the highest term the snapshot
+       carries. A wrong guess splits the pile in the wrong place; it never
+       changes the total, and the total is the figure that must be right. */
+    var mx = 0;
+    toBook.forEach(function(o){ var t = Number(o.x.termNo) || 0; if (t > mx) mx = t; });
+    nowTerm = mx ? String(mx) : '';
+  }
+  var tNow = toBook.filter(function(o){ return String(o.x.termNo).trim() === nowTerm; });
+  var tOld = toBook.filter(function(o){ return String(o.x.termNo).trim() !== nowTerm; });
+
+  /* DISTINCT STUDENTS BOOKED AHEAD, not sittings — a student with two
+     Wednesdays is one person to expect and two chairs to fill. */
+  var aheadStu = (function(){
+    var t = midnight(), s = {};
+    detRows().forEach(function(d){
+      var w = dparse(effDate(d));
+      if (w && w >= t) s[d.sid] = 1;
+    });
+    return Object.keys(s).length;
+  })();
+
+  var nOf = function(n, one, many){ return n + ' ' + (n === 1 ? one : many); };
+
+  var kpi =
+    '<div class="kpi">' +
+      '<div><b>' + sitOf(toBook) + '</b><span>sittings to book</span>' +
+        '<em>' + nOf(sitOf(tNow), 'sitting', 'sittings') + ' this term &middot; ' +
+                 nOf(stuOf(tNow), 'student', 'students') + '<br>' +
+                 nOf(sitOf(tOld), 'sitting', 'sittings') + ' earlier &middot; ' +
+                 nOf(stuOf(tOld), 'student', 'students') + '</em></div>' +
+      '<div><b>' + bookedAhead() + '</b><span>sittings booked</span>' +
+        '<em>' + nOf(aheadStu, 'student', 'students') + ' across ' +
+                 nOf(up.length, 'Wednesday', 'Wednesdays') + '</em></div>' +
+      '<div><b>' + late.length + '</b><span>to chase</span>' +
+        '<em>' + (late.length ? 'booked, the date passed,<br>nobody marked Attended'
+                              : 'nothing was missed') + '</em></div>' +
+    '</div>' +
     (historic().length
-      ? '<div><b>' + historic().length + '</b><span>imported from the old book</span></div>'
-      : '') +
-    '<div><b>' + toBook.reduce(function(n,o){ return n + o.left; }, 0) + '</b><span>owed, not yet booked</span></div>' +
-  '</div>';
+      ? '<div class="note quiet"><b>' + historic().length + ' sittings imported from the old book.</b> ' +
+        'History &mdash; shown on a student\'s record, never counted above and never chased.</div>'
+      : '');
 
   var body = '';
   if (S.dtab === 'past'){

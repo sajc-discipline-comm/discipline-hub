@@ -3190,11 +3190,35 @@ function detRows(){
    A past date that is not Attended is owed AND overdue; that is the number
    worth putting on a screen. */
 function isOwed(d){ return d.att !== ATT_OK; }
+
+/* A LINE FROM THE OLD BOOK, WHICH CANNOT BE OVERDUE.
+   Added 12 August 2026, an hour after the first import put 231 of them in the
+   tab and the screen announced 89 sittings still owed. Kim: "the still owed
+   being 89 is crazy to me."
+
+   She was right and the arithmetic agreed exactly — 99 imported rows are not
+   marked Attended, less about ten the book recorded as excused. Every one is a
+   Wednesday in March or May that was dealt with in March or May: rescheduled,
+   chased, excused, or quietly dropped. Whatever happened, it happened, and the
+   book is the only record of it. Treating "nobody typed Attended" as "still
+   owed" is right for a sitting THIS system issued and wrong for a sitting it
+   merely inherited.
+
+   THE TEST IS THE MISSING LINK, NOT THE ID PREFIX. Every row booked through the
+   Hub carries a Source Entry ID; every imported row deliberately does not. So
+   "no link" means "not ours", which is the actual property that matters —
+   whereas IMP- is a naming convention that a future import could change. */
+function isHistoric(d){ return !d.srcEntry; }
 /* Judged on the EFFECTIVE date — see effDate. A row whose date cannot be read
    at all is never "past": an unreadable date is not evidence of anything, and
    guessing at it is how an imported line becomes a chase. */
 function isPast(d){ var t = dparse(effDate(d)); return !!t && t < midnight(); }
-function overdue(){ return detRows().filter(function(d){ return isOwed(d) && isPast(d); }); }
+function overdue(){
+  return detRows().filter(function(d){ return isOwed(d) && isPast(d) && !isHistoric(d); });
+}
+/* Shown, never chased. Counted on its own so that importing history cannot
+   silently inflate the one number the Wednesday actually runs on. */
+function historic(){ return detRows().filter(isHistoric); }
 /* Rows the import left with a date nothing can read. Surfaced on their own,
    never counted as upcoming and never counted as overdue. */
 function undated(){ return detRows().filter(function(d){ return !effDate(d); }); }
@@ -3427,7 +3451,9 @@ function lcDetHtml(key){
       late.map(function(d){ return detRowHtml(d, ''); }).join('') + '</div>' +
       '<div class="note">A session whose date has passed and which nobody marked <b>Attended</b> ' +
       'is still owed. That is derived from the attendance column rather than stored, so it ' +
-      'carries across a term and across the year on its own.</div>';
+      'carries across a term and across the year on its own. ' +
+      '<b>Lines imported from the old book are never counted here</b> &mdash; whatever ' +
+      'happened to a sitting in March happened in March.</div>';
   }
 
   return head + body + owedList +
@@ -3702,6 +3728,9 @@ function detHtml(){
     '<div><b>' + up.length + '</b><span>session' + (up.length===1?'':'s') + ' ahead</span></div>' +
     '<div><b>' + bookedAhead() + '</b><span>sittings booked in</span></div>' +
     '<div><b>' + late.length + '</b><span>overdue, still owed</span></div>' +
+    (historic().length
+      ? '<div><b>' + historic().length + '</b><span>imported from the old book</span></div>'
+      : '') +
     '<div><b>' + toBook.reduce(function(n,o){ return n + o.left; }, 0) + '</b><span>owed, not yet booked</span></div>' +
   '</div>';
 

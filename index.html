@@ -272,6 +272,29 @@ h2{font-size:24px;margin-bottom:4px}
   color:var(--muted);opacity:.85}
 .note.quiet{font-size:12px;opacity:.8}
 .printhead{display:none}
+.flash{color:var(--ok,#2e7d32);font-weight:600}
+#refreshall{cursor:pointer;text-decoration:none;border-bottom:1px dotted currentColor}
+
+/* ── TICKING ROWS ────────────────────────────────────────────────────────
+   The mark is drawn rather than a native checkbox so it reads identically on
+   every device, and the target is deliberately large: this gets used on a
+   phone, one-handed, walking. */
+.tick{flex:0 0 auto;width:26px;height:26px;border:2px solid var(--line);
+  border-radius:7px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:700;cursor:pointer;user-select:none;
+  background:var(--card,#fff);margin-right:2px}
+.tick:hover{border-color:var(--ink,#222)}
+.tick.on{background:#2e7d32;border-color:#2e7d32;color:#fff}
+.row.picked{background:rgba(46,125,50,.07)}
+
+.pickbar{position:sticky;top:0;z-index:5;display:flex;gap:12px;align-items:center;
+  flex-wrap:wrap;padding:12px 14px;margin:14px 0 6px;border:1px solid var(--line);
+  border-radius:12px;background:var(--card,#fff)}
+.pickbar.on{border-color:#2e7d32;background:rgba(46,125,50,.06)}
+.pickn{font-weight:600;font-size:13px;min-width:130px}
+.pickbar select{padding:7px 9px;font-size:13px}
+.pickbar button[disabled]{opacity:.45;cursor:not-allowed}
+@media (max-width:640px){ .pickbar{position:static} .pickn{min-width:0;width:100%} }
 .tabs a b{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:9px;
   background:var(--line);font-size:11px;font-weight:600;vertical-align:1px}
 
@@ -699,7 +722,15 @@ var S = {
      move is to read it again rather than to draw what we think we wrote —
      a mirror would drift the first time apiHubSchedule_ changed a default,
      and it would drift silently. */
-  dtab:'next',          // Detention Sessions: coming up / held / still owed
+  dtab:'next',          // Detention Sessions: to book / coming up / held / to chase
+  /* WHICH ROWS ARE TICKED, AND ON WHICH SCREEN. Kept as a map rather than a
+     list so a tick is O(1) to set, clear and read while rendering hundreds of
+     rows. Kim, 12 August 2026, on where this goes next: "theoretically this
+     bulk thing would apply to various contexts - having sent mass emails to
+     follow up with latecoming for the day etc" — which is why `pick` is not
+     called `booking`, and why the tick lives in state rather than in the DOM.
+     The next screen that needs it takes the same three lines. */
+  pick:{}, pickDate:'', flash:'',
   sched:null,           // { x, booked, left } — the student being booked
   pickDates:{},         // session date string -> true
   sess:'',              // the session date open for attendance
@@ -912,7 +943,9 @@ function snapRow(r, cols){
     term:     Number(cell(r,cols,'Term count'))||0,
     year:     Number(cell(r,cols,'Year count'))||0,
     tier:     Number(cell(r,cols,'Tier'))||0,
-    action:   String(cell(r,cols,'Action')||''),
+    action:   actionFor(String(cell(r,cols,'Domain')||''),
+                        Number(cell(r,cols,'Tier'))||0,
+                        String(cell(r,cols,'Action')||'')),
     whoActs:  String(cell(r,cols,'Who acts')||''),
     follows:  /^y/i.test(String(cell(r,cols,'DC follows up')||'')),
     /* BLANK IS NOT ZERO, and the distinction is the ladder's own. readLadders_
@@ -1133,6 +1166,38 @@ function actionOf(action, sessions){
   return a + (a ? ' · ' : '') + n + ' detention session' + (n === 1 ? '' : 's');
 }
 
+/* A TICK. Deliberately not a real <input type=checkbox>: the whole row is the
+   target, which matters on a phone held in one hand in a corridor, and the
+   mark is drawn rather than native so it reads the same on every device. */
+function tickHtml(key){
+  return '<div class="tick' + (S.pick[key] ? ' on' : '') + '" data-tick="' + esc(key) + '">' +
+    (S.pick[key] ? '&#10003;' : '') + '</div>';
+}
+function pickedKeys(){ return Object.keys(S.pick).filter(function(k){ return S.pick[k]; }); }
+function clearPicks(){ S.pick = {}; }
+
+/* THE ACTION SENTENCE, LOOKED UP RATHER THAN SHIPPED.
+   The server blanks it on every snapshot row and sends the ladder table once —
+   the same sentence used to travel beside every student standing on that rung.
+   Memoised because this is called while rendering hundreds of rows.
+
+   FALLS BACK TO WHATEVER THE ROW CARRIES. A snapshot built by an older server,
+   or a row whose ladder has since been retired, still shows what it always
+   showed rather than going blank — an empty action reads as "this tier asks
+   for nothing", which is a different and much worse claim than "the rule has
+   moved on". */
+var _actCache = null;
+function actionFor(ladder, tier, fallback){
+  if (fallback) return fallback;
+  if (!_actCache){
+    _actCache = {};
+    ((S.snap && S.snap.ladders) || []).forEach(function(l){
+      _actCache[String(l.ladder) + '|' + Number(l.tier)] = l.action || '';
+    });
+  }
+  return _actCache[String(ladder) + '|' + Number(tier)] || '';
+}
+
 function sevClass(t){ return t>=5?'t5':t===4?'t4':t===3?'t3':t>=1?'t2':''; }
 
 /* WHAT A DOMAIN IS CALLED IN A SENTENCE. ⚙️ Statuses carries the label, so
@@ -1175,6 +1240,23 @@ var MONTH_LONG=['January','February','March','April','May','June','July','August
 var DAYNAME={sun:'Sunday',mon:'Monday',tue:'Tuesday',wed:'Wednesday',thu:'Thursday',fri:'Friday',sat:'Saturday'};
 
 /* '29 Jul 2026 (Wed)' → 'Wednesday 29 July'. */
+/* THE NEXT FEW DETENTION DAYS. Config names the day — Wednesday — so this is
+   not hard-coded to one weekday any more than the ladders are hard-coded to
+   one figure. Today counts as one if it IS the day: a sitting can be added to
+   this afternoon's room until it has happened. */
+function nextWednesdays(n){
+  var names = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  var want = names.indexOf(String((S.snap && S.snap.config && S.snap.config.detentionDay) ||
+                                  'Wednesday').trim().toLowerCase());
+  if (want < 0) want = 3;
+  var out = [], d = midnight();
+  for (var i = 0; out.length < n && i < 90; i++){
+    var t = new Date(d.getFullYear(), d.getMonth(), d.getDate() + i);
+    if (t.getDay() === want) out.push(dstamp(t));
+  }
+  return out;
+}
+
 function longish(stamp){
   var m = /^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s*\(([A-Za-z]{3})\)/.exec(String(stamp||''));
   if (!m) return String(stamp||'');
@@ -1434,6 +1516,75 @@ function signIn(){
    is what S.pending is for. It now tracks only the two reads that can still
    be outstanding after sign-in: early dismissals when you refresh that area,
    and grooming until you first open it. */
+/* ── EVERYTHING AGAIN, ON DEMAND ─────────────────────────────────────────
+   The Hub reads once at sign-in and then works from what it has, which is
+   right — but the spreadsheet is edited by other people and by a timed trigger,
+   so "what it has" quietly ages. Until now the only cure was signing out and
+   in, which is a strange thing to have to do to see a number change. */
+function refreshAll(){
+  if (S.busy) return;
+  S.busy = true; S.err = ''; render();
+  loadAll().then(function(){
+    S.busy = false;
+    /* A TICK IS A CLAIM ABOUT ROWS THAT MAY NO LONGER EXIST. Somebody else may
+       have booked half of them while this screen sat open, so the selection is
+       dropped rather than carried across a reload and applied to whatever now
+       occupies those keys. */
+    clearPicks();
+    S.flash = 'Reloaded ' + nowShort();
+    render();
+    setTimeout(function(){ S.flash = ''; render(); }, 4000);
+  }).catch(function(e){
+    S.busy = false; S.err = reachErr(e, 'reload'); render();
+  });
+}
+function nowShort(){
+  var d = new Date(), p = function(n){ return (n<10?'0':'') + n; };
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/* ── MANY STUDENTS, ONE AFTERNOON, ONE REQUEST ───────────────────────────
+   Not a loop of single bookings: eighty of those is eighty POSTs over a
+   transport with a known habit of losing its reply under load, plus eighty
+   locks and eighty full reads of the tab. The server takes the lock once. */
+function bookPicked(){
+  var keys = pickedKeys();
+  if (!keys.length || S.busy) return;
+  var when = (document.getElementById('pickdate') || {}).value || S.pickDate;
+  if (!when){ S.err = 'Pick a Wednesday first.'; render(); return; }
+
+  var byKey = {};
+  owedBookings(null).forEach(function(o){ byKey[rowKey(o.x)] = o; });
+  var list = keys.map(function(k){ return byKey[k]; }).filter(Boolean).map(function(o){
+    return { studentId:o.x.id, name:o.x.name, cls:o.x.cls, area:o.x.area,
+             sourceEntryId:o.x.entryId, ladder:o.x.domain, tier:o.x.tier,
+             sessionOf:o.x.owed, term:o.x.termNo };
+  });
+  if (!list.length){ S.err = 'Those rows are no longer on the list — reload.'; render(); return; }
+
+  S.busy = true; S.err = ''; render();
+  api('hubScheduleMany', { token: TOKEN, by: S.user, sessionDate: when, bookings: list })
+    .then(function(res){
+      S.busy = false;
+      if (!res || !res.ok){ S.err = (res && res.error) || 'Nothing was booked.'; render(); return; }
+      clearPicks();
+      S.flash = res.booked + ' booked into ' + longish(when) +
+        (res.clashed && res.clashed.length
+          ? ' · ' + res.clashed.length + ' already had a sitting that day and were left alone'
+          : '');
+      return loadAll().then(function(){ render(); });
+    })
+    .catch(function(e){
+      /* NOT RETRIED. hubScheduleMany is a write, and the same reasoning that
+         keeps hubSchedule out of RETRY_SAFE applies with eighty times the
+         consequence: a lost reply is not a lost write. */
+      S.busy = false;
+      S.err = reachErr(e, 'book those students') +
+        ' Reload before trying again — some of them may already be booked.';
+      render();
+    });
+}
+
 function loadAll(){
   return api('hubAll', { token: TOKEN }).then(function(res){
     if (!res || !res.ok) throw new Error((res && res.error) || 'The snapshot could not be read.');
@@ -1449,6 +1600,7 @@ function loadAll(){
        read" and none of them could say what went wrong. Everything that reads
        S.det goes through detOk(), which treats ok:false and null alike. */
     S.det   = (res.detention && res.detention.ok) ? res.detention : (res.detention || null);
+    _actCache = null;      // a new snapshot may carry a new ladder table
     S.early = (res.early && res.early.ok) ? res.early : null;
     /* No `det` key: detention arrives with this same reply, so there is never
        a moment where it is outstanding. It was initialised here and reset on
@@ -3855,10 +4007,27 @@ function detHtml(){
       body = '<div class="blank">Nobody is owed a sitting that has not been booked.</div>';
     }
     if (bookable.length){
-      body += '<div class="grouplabel">Owed but not yet booked</div>' +
+      /* THE WEDNESDAYS ON OFFER. Only dates that already have a room, plus the
+         next few, because inventing a date nobody has agreed to run is how a
+         detention gets booked into a week with no duty teacher. */
+      var opts = nextWednesdays(6).map(function(w){
+        return '<option value="' + esc(w) + '"' + (S.pickDate===w?' selected':'') + '>' +
+               esc(longish(w)) + '</option>';
+      }).join('');
+      var n = pickedKeys().length;
+      body += '<div class="pickbar' + (n ? ' on' : '') + '">' +
+          '<div class="pickn">' + (n ? n + ' selected' : 'Tick students to book') + '</div>' +
+          '<select id="pickdate">' + opts + '</select>' +
+          '<button class="sm" id="pickgo"' + (n ? '' : ' disabled') + '>' +
+            'Book ' + (n || '') + ' into this Wednesday</button>' +
+          (n ? '<button class="plain sm" id="pickclear">Clear</button>' : '') +
+        '</div>' +
+        '<div class="grouplabel">Owed but not yet booked</div>' +
         '<div class="rows">' + bookable.map(function(o){
-          return '<div class="row ' + sevClass(o.x.tier) + '" data-book="' + esc(rowKey(o.x)) + '">' +
-            '<div class="badge">&#9679;</div>' +
+          var key = rowKey(o.x);
+          return '<div class="row ' + sevClass(o.x.tier) + (S.pick[key] ? ' picked' : '') +
+              '" data-book="' + esc(key) + '">' +
+            tickHtml(key) +
             '<div class="body"><div class="p">' + esc(o.x.name) + '</div>' +
             '<div class="meta">' + esc(o.x.cls) + ' &middot; ' + esc(o.x.area) +
               (homeless(o.x) ? ' <span class="tag thu">no cohort &mdash; only visible here</span>' : '') +
@@ -3893,7 +4062,14 @@ function detHtml(){
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="appbar"><a data-go="menu">&larr; All areas</a><span>&middot;</span>' +
-      '<span>Signed in as ' + esc(S.user) + '</span></div>' +
+      '<span>Signed in as ' + esc(S.user) + '</span><span>&middot;</span>' +
+      /* THE SPREADSHEET IS EDITED BY OTHER PEOPLE AND BY A TIMED TRIGGER, so
+         what this screen is holding quietly ages. Until now the only way to
+         see a change was to sign out and back in. */
+      '<a id="refreshall">' + (S.busy ? 'Reloading…' : '↻ Reload') + '</a>' +
+      (S.flash ? '<span>&middot;</span><span class="flash">' + esc(S.flash) + '</span>' : '') +
+      '</div>' +
+    (S.err ? '<div class="note warn">' + esc(S.err) + '</div>' : '') +
     '<div class="date">Detention Sessions ' + builtHtml() + '</div>' +
     '<h1>Detention Sessions</h1>' +
     /* PLAIN. The first version explained the data model — "a session is not a
@@ -4798,6 +4974,20 @@ function wire(){
        read as a menu row. */
     var dtab = t.closest && t.closest('[data-dtab]');
     if (dtab){ S.dtab = dtab.getAttribute('data-dtab'); render(); return; }
+
+    /* A TICK TOGGLES AND NOTHING ELSE. Checked before the row's own handler,
+       because the tick sits inside the row and the row opens a student — so
+       without this, ticking somebody would navigate away from the list you are
+       ticking. */
+    var tick = t.closest && t.closest('[data-tick]');
+    if (tick){
+      var tk = tick.getAttribute('data-tick');
+      if (S.pick[tk]) delete S.pick[tk]; else S.pick[tk] = 1;
+      render(); return;
+    }
+    if (t.id === 'pickclear'){ clearPicks(); render(); return; }
+    if (t.id === 'pickgo'){ bookPicked(); return; }
+    if (t.id === 'refreshall'){ refreshAll(); return; }
 
     var save = t.closest && t.closest('[data-save]');
     if (save){ e.stopPropagation(); saveAttendance(save.getAttribute('data-save')); return; }

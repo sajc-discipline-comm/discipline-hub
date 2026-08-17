@@ -663,6 +663,46 @@ var THU_PARA = 'Separately — the following students have been late on three or
 
 var TOKEN = null;
 
+/* ── THE SESSION, REMEMBERED BETWEEN PAGE LOADS ──────────────────────────
+   Kim, 12 August 2026: "loading in ... really does take a while now - people
+   WILL be frustrated." The measurement said the data is not the problem: the
+   reply is 21.9 kB and arrives in 355 ms. The seven seconds before it are the
+   sign-in — the page, then Google's script, then Google's token, then a server
+   call that makes ITS OWN outbound request to Google to verify that token.
+   Four waits in a row, and only then the fast bit.
+
+   So the fix is not to sign in at all, most of the time. The token is kept and
+   tried first; if the server still honours it the menu is up in about a second
+   and Google is never involved. If it does not, the sign-in screen appears
+   exactly as before.
+
+   ON A SHARED SCHOOL LAPTOP THIS HAS TO EXPIRE ON ITS OWN. The stored copy
+   carries its own deadline, short enough that a machine left in a staffroom
+   does not stay signed in all evening, and SIGNING OUT CLEARS IT — otherwise
+   "sign out" would stop meaning what it says, which on a shared computer is
+   the whole point of the button. */
+var TOKEN_KEY = 'sajc.hub.session';
+var TOKEN_HOURS = 8;
+
+function rememberSession(token, user, email){
+  try {
+    localStorage.setItem(TOKEN_KEY, JSON.stringify({
+      token: token, user: user || '', email: email || '',
+      until: Date.now() + TOKEN_HOURS * 3600 * 1000
+    }));
+  } catch(e){ /* private browsing, or storage disabled — sign in as normal */ }
+}
+function recallSession(){
+  try {
+    var raw = localStorage.getItem(TOKEN_KEY);
+    if (!raw) return null;
+    var s = JSON.parse(raw);
+    if (!s || !s.token || !s.until || Date.now() > s.until){ forgetSession(); return null; }
+    return s;
+  } catch(e){ return null; }
+}
+function forgetSession(){ try { localStorage.removeItem(TOKEN_KEY); } catch(e){} }
+
 var S = {
   view:'signin', user:'', name:'', busy:false, err:'',
   snap:null,            // the snapshot part of hubAll's reply, whole
@@ -1423,6 +1463,7 @@ function onGoogleCredential(resp){
     /* THE NAME COMES FROM THE ACCESS TAB, not from anything typed here. */
     S.user = res.name || res.email;
     S.email = res.email || '';        // the VERIFIED address, for the header
+    rememberSession(TOKEN, S.user, S.email);
     return loadAll().then(function(){
       S.busy = false; S.view = 'menu'; render(true);
     });
@@ -1465,7 +1506,7 @@ function signIn(){
 
   api('hubLogin', { password: pw }).then(function(res){
     if (!res || !res.ok){ S.busy=false; S.err=(res&&res.error)||'Could not sign in.'; render(); return; }
-    TOKEN = res.token; S.user = nm;
+    TOKEN = res.token; S.user = nm; rememberSession(TOKEN, nm, '');
     return loadAll().then(function(){
       S.busy = false; S.view = 'menu'; render(true);
     });
@@ -1659,6 +1700,10 @@ function loadGrooming(){
 
 
 function signOut(){
+  /* CLEARED FIRST, before anything can fail. A sign-out that leaves the stored
+     session behind is not a sign-out, and on a shared laptop that is the whole
+     reason the button exists. */
+  forgetSession();
   TOKEN=null; S.teachers=null;
   S.view='signin'; S.snap=null; S.det=null; S.sel={}; S.stamped={}; S.user=''; S.email='';
   /* THE DETENTION KEYS TOO, added 12 August 2026. An abandoned attendance
@@ -5065,7 +5110,29 @@ window.__hubEmailBody = emailBody;
 window.__hubPickedThu = pickedThu;
 window.__hubOpenStudent = openStudent;
 
-render(true);
+/* ── RESUME, IF THE LAST SESSION IS STILL GOOD ───────────────────────────
+   Tried before anything is drawn, so a returning user sees the menu rather
+   than the sign-in screen and then the menu. If the token has expired, or the
+   server has restarted, or the access list has changed, hubAll fails and the
+   sign-in screen appears exactly as it always did — the stored session is an
+   optimisation, never an authority. The SERVER still decides. */
+(function resume(){
+  var s = recallSession();
+  if (!s){ render(true); return; }
+  TOKEN = s.token; S.user = s.user; S.email = s.email;
+  S.view = 'menu'; S.busy = true;
+  render(true);
+  loadAll().then(function(){
+    S.busy = false; render(true);
+  }).catch(function(){
+    /* Not an error worth showing. The session simply aged out, and the honest
+       response is the sign-in screen, not an explanation of why. */
+    forgetSession();
+    TOKEN = null; S.user = ''; S.email = ''; S.snap = null; S.det = null;
+    S.busy = false; S.view = 'signin'; S.err = '';
+    render(true);
+  });
+})();
 
 })();
 </script>

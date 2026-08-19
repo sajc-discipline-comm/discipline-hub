@@ -875,6 +875,10 @@ function apiOnce(action, payload){
     credentials:'omit', cache:'no-store'
   }).then(function(r){
     return r.text().then(function(txt){
+      /* THE SIZE OF THE REPLY, captured before it is parsed. If hubAll is
+         slow because it is large, this is the number that says so — and it is
+         the one number nobody has ever looked at. */
+      LAST_BYTES = txt.length;
       try { return JSON.parse(txt); }
       catch (e) {
         var err = new Error('badReply');
@@ -919,13 +923,80 @@ function apiOnce(action, payload){
    not a struggling server, and the answer to collision is to back off and try
    again rather than to give up after one go. RETRY_SAFE grants three, with a
    growing jittered wait; the comment above it records why. */
+/* ══ SPEED INSTRUMENTATION — TEMPORARY, ADDED 17 AUGUST 2026 ═════════════
+   Here to answer ONE question and then be deleted: when the Hub is slow, is
+   the time inside the script or in Apps Script's plumbing between here and
+   there?
+
+   Those two look identical from a chair and have opposite fixes. Step B was
+   measured this way on 5 August and the answer was startling — a 62-second
+   save of which 0.8 seconds was the script. Nothing in the code could have
+   been tuned to help. Nobody has ever measured the Hub.
+
+   HOW TO READ IT. This half measures the ROUND TRIP from the browser. The
+   other half is free and needs no code: the Apps Script editor's Executions
+   panel (⏱, left sidebar) already lists every run with its duration.
+
+       round trip (here)  −  execution (Executions panel)  =  the plumbing
+
+   If that subtraction is small, the script is the problem and it can be
+   tuned. If it is most of the total, no amount of tuning will touch it and
+   the answer is architectural.
+
+   IT ALSO RECORDS THE REPLY SIZE, which is the other candidate nobody has
+   measured — a very large hubAll would explain a lot on its own.
+
+   Call speed() in the browser console for the full list.
+   ═══════════════════════════════════════════════════════════════════════ */
+var TIMINGS = [];
+var LAST_BYTES = 0;
+
+function tick_(){
+  return (window.performance && performance.now) ? performance.now() : Date.now();
+}
+
+function noteTiming(action, ms, tries, bytes){
+  var t = { action:action, ms:Math.round(ms), tries:tries,
+            kb:Math.round(bytes / 102.4) / 10, at:nowShort() };
+  TIMINGS.push(t);
+  if (TIMINGS.length > 80) TIMINGS.shift();
+  try {
+    console.log('[speed] ' + t.action + '  ' + t.ms + ' ms' +
+      (t.tries > 1 ? '  · ' + t.tries + ' tries' : '') +
+      (t.kb ? '  · ' + t.kb + ' KB' : ''));
+  } catch (e) {}
+}
+
+function slowestCall(){
+  var w = null;
+  TIMINGS.forEach(function(t){ if (!w || t.ms > w.ms) w = t; });
+  return w;
+}
+
+/* Paste what this prints. It is the whole session in one block. */
+function speed(){
+  var out = ['SPEED REPORT — ' + todayLong()];
+  TIMINGS.forEach(function(t){
+    out.push(t.at + '   ' + t.action + '   ' + t.ms + ' ms' +
+             (t.tries > 1 ? '   ' + t.tries + ' tries' : '') +
+             (t.kb ? '   ' + t.kb + ' KB' : ''));
+  });
+  if (TIMINGS.length < 2) out.push('(nothing yet — sign in and open an area first)');
+  var s = out.join('\n');
+  try { console.log(s); } catch (e) {}
+  return s;
+}
+try { window.speed = speed; window.__timings = TIMINGS; } catch (e) {}
+
 function api(action, body){
   if (window.__mockApi) return window.__mockApi(action, body);
   var payload = body || {};
   payload.action = action;
   var left = RETRY_SAFE[action] || 0;
+  var t0 = tick_(), tries = 0;
 
   function attempt(){
+    tries++;
     return apiOnce(action, payload).catch(function(e){
       if (!e || !e.badReply || left <= 0) throw e;
       /* GROWING, AND JITTERED — changed 4 August 2026 once the cause was known.
@@ -938,7 +1009,17 @@ function api(action, body){
       return new Promise(function(res){ setTimeout(res, wait); }).then(attempt);
     });
   }
-  return attempt();
+  /* TIMED ACROSS THE RETRIES, NOT WITHIN ONE. What a person waits for is the
+     whole thing, including the backoff, so that is what is recorded — with
+     the attempt count beside it so a slow call caused by two retries is never
+     mistaken for one slow request. */
+  return attempt().then(function(res){
+    noteTiming(action, tick_() - t0, tries, LAST_BYTES);
+    return res;
+  }, function(e){
+    noteTiming(action + ' — FAILED', tick_() - t0, tries, LAST_BYTES);
+    throw e;
+  });
 }
 
 /* One sentence for a failed call, saying which of the two things happened.
@@ -1968,6 +2049,18 @@ function menuHtml(){
        age on the rows above; that stamp is always true, and this line points
        at it instead. It also still named "early dismissal follow-up", an area
        shelved on 3 August, and did not mention grooming, which is also live. */
+    /* ONLY WHEN IT WAS ACTUALLY SLOW — the Step B rule. A permanent readout
+       would be a number nobody needs on a screen that says what it is and
+       nothing else. Silence means nothing was worth reporting. */
+    (function(){
+      var w = slowestCall();
+      return (w && w.ms > 3000)
+        ? '<div class="foot"><span>Slowest this session: <b>' + esc(w.action) + ' ' +
+          w.ms + ' ms</b>' + (w.kb ? ' &middot; ' + w.kb + ' KB' : '') +
+          (w.tries > 1 ? ' &middot; ' + w.tries + ' tries' : '') +
+          ' &mdash; run <b>speed()</b> in the browser console for the full list.</span></div>'
+        : '';
+    })() +
     '<div class="foot"><span>Counts come from the snapshot, which is rebuilt on a timer &mdash; ' +
     'each area says how old its figures are. Early dismissals and grooming are read live. ' +
     'Nothing is locked &mdash; every area opens for anyone.</span>' +

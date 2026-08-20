@@ -4368,18 +4368,33 @@ function groomFor(card){
       return { state:'hit', s:list[j] };
     }
   }
-  /* NOT FOUND is not the same as CLEAN, and the grooming tracker matches on a
-     name it may spell differently. Said out loud on the card. */
-  return { state:'none' };
+  /* ── FOUND 20 AUGUST 2026, ON REAL DATA, AND IT WAS MINE ────────────────
+     This returned "could not be matched", and the screen then told Kim that
+     42 of 48 students could not be found in the Grooming Tracker.
+
+     THE READ ONLY CONTAINS STUDENTS WHO HAVE GROOMING OFFENCES. It is built
+     from that tracker's LOG, not from a roster — so a student with a spotless
+     record is not in the list at all, and absence means "nothing recorded",
+     not "I looked and failed". Reporting it as a failure accused forty-two
+     students of a data fault that did not exist, on the one screen least able
+     to be checked.
+
+     THE HONEST POSITION: a genuine name mismatch and a clean record are
+     INDISTINGUISHABLE FROM HERE, because there is no roster to be missing
+     from. That is a property of two books keyed differently, not something
+     this function can fix, and it is said ONCE at the foot of the screen
+     rather than forty-two times on the cards. */
+  return { state:'clean' };
 }
 
 function groomLineHtml(g){
   if (g.state === 'unread')      return '';
   if (g.state === 'unconnected') return '';
-  if (g.state === 'none') {
-    return '<div class="s quiet">No grooming record matched this name and class &mdash; ' +
-           'that may mean nothing to report, or a name spelled differently there.</div>';
-  }
+  /* NOTHING RECORDED IS THE ORDINARY CASE and gets no line. Most students at
+     the DM boundary for latecoming have never been stopped for grooming, and a
+     sentence on every one of those cards is noise that teaches the eye to skip
+     the ones that matter. */
+  if (g.state === 'clean')       return '';
   var s = g.s;
   if (!s.year) return '';
   return '<div class="s"><b>Grooming</b> &middot; ' + s.term + ' this term &middot; ' +
@@ -4464,11 +4479,24 @@ function dmHtml(){
   var cards = dmCards();
   var waiting = dmWaiting().length;
 
-  /* GETTING BETTER IS NOT A DISCHARGE. A full week with no new offence IN THE
-     DOMAIN THAT BROUGHT THEM HERE — never across the card. They keep their
-     tier and everything they owe; this is the difference between a student who
-     is drifting and one who has stopped, which is a thing to know BEFORE a
-     conversation rather than after it. */
+  /* GETTING BETTER IS NOT A DISCHARGE, AND IT IS NOT A SEPARATE PLACE.
+     A full week with no new offence IN THE DOMAIN THAT BROUGHT THEM HERE —
+     never across the card. They keep their tier and everything they owe; this
+     is the difference between a student who is drifting and one who has
+     stopped, which is a thing to know BEFORE a conversation rather than after
+     one.
+
+     ── CORRECTED 20 AUGUST 2026, ON REAL DATA ──────────────────────────────
+     This was a TAB, and on the live sheet it swallowed the screen: forty-eight
+     students were at the boundary, every one of them had last offended more
+     than a week ago, and so the main list read "Nobody is at the DM boundary"
+     while a badge beside it said 48. Two counts of two different things, on
+     the same screen, disagreeing.
+
+     It is now what the design said it should be: a section at the FOOT of the
+     same list, greyed back. Everyone at the boundary is on one page, in one
+     order, and the badge counts what the list shows. A tab that can empty the
+     screen is not a filter, it is a trapdoor. */
   var better = cards.filter(function(c){
     return c.lines.every(function(l){ return Number(l.x.quiet) >= 7; });
   });
@@ -4481,10 +4509,24 @@ function dmHtml(){
     return (da && db) ? (da - db) : String(a.name).localeCompare(String(b.name));
   });
 
-  var body = '';
-  if (S.dmTab === 'held')       body = dmHeldHtml(heldRows);
-  else if (S.dmTab === 'better') body = dmListHtml(better, 'Nobody has been quiet for a week.');
-  else                          body = dmListHtml(live, 'Nobody is at the DM boundary.');
+  var body;
+  if (S.dmTab === 'held') {
+    body = dmHeldHtml(heldRows);
+  } else {
+    /* EVERYONE AT THE BOUNDARY, ON ONE PAGE. Those still moving first, then
+       those who have been quiet a week, greyed back under their own heading —
+       present, not hidden, and not counted as gone. */
+    body = dmListHtml(live, 'Nobody at the DM boundary has offended in the last week.') +
+      (better.length
+        ? '<div class="grouplabel" style="margin-top:26px">Getting better &mdash; ' +
+            better.length + ' with nothing new for a week</div>' +
+          '<div class="note">A week with no new offence <b>in the domain that brought them ' +
+            'here</b>. They keep their tier and everything they owe &mdash; this is the ' +
+            'difference between a student who is drifting and one who has stopped, which is ' +
+            'worth knowing before a conversation rather than after it.</div>' +
+          '<div style="opacity:.62">' + dmListHtml(better, '') + '</div>'
+        : '');
+  }
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
     '<div class="appbar"><a data-go="menu">&larr; All areas</a><span>&middot;</span>' +
@@ -4512,20 +4554,27 @@ function dmHtml(){
       : '') +
 
     '<div class="tabs">' +
+      /* THE BADGE COUNTS WHAT THE LIST SHOWS. It counted `waiting` — students
+         with nothing recorded — while the list showed only those still moving,
+         so on real data it said 48 above an empty page. Two counts of two
+         different things on one screen is worse than no count. */
       '<a class="' + (S.dmTab==='now'?'on':'') + '" data-dmtab="now">At the boundary' +
-        (waiting ? ' <b>' + waiting + '</b>' : '') + '</a>' +
+        (cards.length ? ' <b>' + cards.length + '</b>' : '') + '</a>' +
       '<a class="' + (S.dmTab==='held'?'on':'') + '" data-dmtab="held">On hold' +
         (heldRows.length ? ' <b>' + heldRows.length + '</b>' : '') + '</a>' +
-      '<a class="' + (S.dmTab==='better'?'on':'') + '" data-dmtab="better">Getting better' +
-        (better.length ? ' <b>' + better.length + '</b>' : '') + '</a>' +
     '</div>' +
+    (waiting
+      ? '<div class="who">' + waiting + ' of them have nothing recorded against them yet.</div>'
+      : '') +
     body +
     dmFaultsHtml() +
   '</div></div>';
 }
 
 function dmListHtml(cards, emptyWords){
-  if (!cards.length) return '<div class="blank">' + esc(emptyWords) + '</div>';
+  if (!cards.length) {
+    return emptyWords ? '<div class="blank">' + esc(emptyWords) + '</div>' : '';
+  }
   return '<div class="rows">' + cards.map(function(c){
     /* `open` ALWAYS. .foldb is display:none until .fold.open, and these cards
        do not collapse — the boundary list is a handful of students and hiding
@@ -4603,13 +4652,18 @@ function dmFaultsHtml(){
       'Database, or spelled differently there.');
   }
 
+  /* SAID ONCE, AND NOT AS AN ACCUSATION. A student with nothing shown either
+     has no grooming offences or is spelled differently in that tracker, and
+     from here those are the same picture — the read is built from that book's
+     Log, so there is no roster to be missing from. Naming the limit once is
+     honest; naming forty-two students is not. */
   if (S.groom && S.groom.connected) {
-    var unmatched = dmCards().filter(function(c){ return c.groom.state === 'none'; }).length;
-    if (unmatched) {
-      out.push(unmatched + ' of these students could not be matched in the Grooming Tracker. ' +
-        'It matches on Student ID where it has one and on name and class otherwise, so a ' +
-        'different spelling there reads as nothing to report.');
-    }
+    var shown = dmCards().filter(function(c){ return c.groom.state === 'hit'; }).length;
+    out.push('<b>Grooming is matched by Student ID</b> where the Grooming Tracker has one, ' +
+      'and by name and class otherwise. ' + shown + ' of these students have something ' +
+      'recorded there. A student with nothing shown either has a clean record or is spelled ' +
+      'differently in that book &mdash; from here the two look identical, because that read ' +
+      'comes from its Log rather than from a roster.');
   }
 
   if (!out.length) return '';

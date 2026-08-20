@@ -1839,11 +1839,75 @@ function go(v, extra){
      the moment you booked it; carried across a screen change it becomes a
      delete button for rows you can no longer see. Armed removes are dropped
      with it, so nothing is left half-confirmed. */
-  if (moved){ S.lastBook = null; S.armUnbook = ''; }
+  /* NEITHER DOES AN ERROR. S.err, S.derr and S.flash were set by whatever
+     failed or succeeded on the screen you have just left, and nothing cleared
+     them on the way out — so a failed save on the session screen reappeared,
+     word for word, on the detention list, the menu and the student page, long
+     after it had stopped being true. A stale error is worse than no error:
+     it is read as a fresh one. */
+  if (moved){
+    S.lastBook = null; S.armUnbook = '';
+    S.err = ''; S.derr = ''; S.flash = '';
+  }
   S.view = v;
   render(moved);
 }
 window.__hubGo = go;
+
+/* ── THE PHONE'S BACK BUTTON ──────────────────────────────────────────────
+   The Hub never touched history, so on the device it is mostly used on, the
+   most-used back control closed it.
+
+   BACK DOES WHAT THE BACK LINK ON THIS SCREEN DOES. Not a history stack of
+   where you have been — the trail through this app is a tree, not a line, and
+   several screens depend on state (S.sched, S.sess, S.student) that is cleared
+   the moment you leave them. Replaying a trail into a screen whose subject no
+   longer exists is how you get a blank page from a button that is supposed to
+   be safe. Walking one step UP is always well defined, always renders, and is
+   what the arrow at the top of the screen already promises.
+
+   THE COST, STATED: Back can no longer leave the Hub. On the menu it does
+   nothing. That was the deliberate trade — "I cannot leave this page" is a
+   quieter complaint than "Back closed the app in the middle of a room". */
+function backFrom(v){
+  /* An area screen only exists if S.area resolves. Everything that would send
+     you to 'lc' checks first and falls back to the menu, because 'lc' with an
+     unresolvable area is the blank-render case N4 was about. */
+  var toArea = areaOf(S.area) ? 'lc' : 'menu';
+  if (v === 'lc' || v === 'early' || v === 'groom' || v === 'det' || v === 'soon') return 'menu';
+  if (v === 'sess')    return 'det';
+  if (v === 'student') return (S.from === 'early') ? 'early' : toArea;
+  if (v === 'email' || v === 'sent') return toArea;
+  /* These two carry their own answer, set when booking was opened. Same source
+     as the on-screen back link, so the two cannot disagree. */
+  if (v === 'sched' || v === 'booked') return (S.backTo === 'det') ? 'det' : toArea;
+  return '';   // signin and menu have nothing above them
+}
+
+/* ONE ENTRY, RE-ARMED EVERY TIME IT IS SPENT. Pushing a state per screen
+   change would put the app's whole tree into the browser's line and reintroduce
+   exactly the replay problem above. One is enough: it is consumed by a Back
+   press, and put straight back. */
+function armBack(){
+  try { if (window.history && history.pushState) history.pushState({ hub:1 }, ''); } catch (e) {}
+}
+
+try {
+  window.addEventListener('popstate', function(){
+    /* RE-ARMED FIRST, before anything can return early. If this line is ever
+       skipped, the next Back press leaves the Hub — and it would be skipped on
+       precisely the presses that happen during a save, which is the worst
+       moment to close the app. */
+    armBack();
+    /* A WRITE IS IN FLIGHT. Changing screens under it does not cancel it — the
+       row still lands — but it does take away the screen that was going to
+       report what happened. The press is swallowed rather than obeyed. */
+    if (S.busy) return;
+    var to = backFrom(S.view);
+    if (to) go(to);
+  });
+  armBack();
+} catch (e) {}
 
 function openArea(key){
   var a = areaOf(key);
@@ -2252,6 +2316,16 @@ function legendHtml(key){
     .map(legendFor).join('');
 }
 
+/* THE AREA'S NAME, AND IT CANNOT THROW. Four screens read areaOf(S.area).title
+   directly. areaOf returns null for a key that is not in AREAS — an empty
+   S.area, a cohort-less row, a key written by some future caller — and .title
+   on null takes the WHOLE RENDER down, so the symptom is a blank screen rather
+   than a missing word. Three of the four were on the email path, which is the
+   one screen where losing your work costs somebody an afternoon. */
+function areaTitle(){
+  return (areaOf(S.area) || {}).title || 'the list';
+}
+
 /* ── one student ──────────────────────────────────────────────────────── */
 /* Opened from any row in a worklist. It exists because the list can only ever
    say WHAT the count is, and the question somebody actually has at the point
@@ -2270,6 +2344,14 @@ function openStudent(key){
      the headline figure from whichever row happened to be clicked made the
      student page contradict the list it was opened from. */
   S.student = x; S.history = null; S.hErr = ''; S.ask = null;
+  /* CLEARED HERE, AND IT NEVER WAS UNTIL 20 AUGUST 2026. openStudentFromEarly
+     sets S.from = 'early' and nothing but signing out put it back — so after
+     one visit to a student through Early dismissals, EVERY student page for
+     the rest of the session had a back link reading "← Early dismissals",
+     including students opened from a latecoming worklist, and it took you
+     there. A flag that says where you came from has to be written on every
+     way in, not on one of them. */
+  S.from = '';
   /* Set BEFORE the screen is drawn. Otherwise the first paint has no history
      and no reason given for not having one, and a slow read looks like a
      broken page rather than a page that is working. */
@@ -3839,20 +3921,41 @@ function openBooking(key){
   var b = bookedFor(x.id, x.area, x.termNo);
   var left = (b === null) ? x.owed : Math.max(0, x.owed - b);
   S.err = '';
-  /* SET S.area TOO. Booking is reachable from the Detention Sessions screen as
-     well as from inside an area, and both Cancel and the back link on the
-     booking screen go to 'lc' — which reads S.area and calls areaOf(key).title
-     on the result. Arriving from Detention Sessions with S.area still holding
-     whatever was open last session, or nothing at all, is a null dereference
-     on a screen somebody reached by pressing Cancel. */
-  var key = areaKeyOf(x.area);
-  /* WHERE BACK GOES. Booking is reachable from inside an area and from the
-     all-areas Detention Sessions screen, and a cohort-less row belongs to no
-     area at all — so the back link cannot just say "the area". It remembers. */
-  go('sched', { sched:{ x:x, booked:(b===null?0:b), left:left,
+
+  /* ── WHERE BACK GOES IS WHERE YOU CAME FROM ──────────────────────────────
+     THIS WAS THE BUG, 20 August 2026. Kim: "when i book detention via
+     detention im sent back to latecoming which is crazy."
+
+     It was: backTo = areaOf(areaKeyOf(x.area)) ? 'lc' : 'det' — the origin
+     inferred from WHAT THE OFFENCE IS rather than from WHERE THE CLICK CAME
+     FROM. Booking a latecoming debt off the Detention Sessions screen sets
+     that to 'lc', so Cancel, the back link and the confirmation screen all
+     sent you into the Latecoming worklist, a screen you had not opened and
+     had no reason to be on. It only looked right because the first way anyone
+     used booking was from inside an area, where the two happen to agree.
+
+     S.view is the honest answer and it was available the whole time. The
+     Detention Sessions screen is 'det'; every other route into booking is
+     from an area worklist. */
+  var from = (S.view === 'det') ? 'det' : 'lc';
+
+  /* S.area IS ONLY TOUCHED WHEN BACK ACTUALLY GOES TO AN AREA. Setting it
+     unconditionally — which is what the old line did — silently changed which
+     area the Hub thought you had open, from a screen that is not an area, and
+     the change outlived the booking. S.sel is seeded by openArea() and by
+     nothing else, so the follow-up ticks would then belong to the area you
+     left rather than the one the Hub now claimed you were in. */
+  var extra = { sched:{ x:x, booked:(b===null?0:b), left:left,
                         others: otherSittings(x.id, x.area, x.termNo) },
-                pickDates:{}, backTo: (areaOf(key) ? 'lc' : 'det'),
-                area: (areaOf(key) ? key : S.area) });
+                pickDates:{}, backTo: from };
+  if (from === 'lc') {
+    /* A cohort-less row belongs to no area at all, so keep whatever was open
+       rather than writing a key areaOf() cannot resolve — every screen that
+       reads S.area calls .title on the result. */
+    var key = areaKeyOf(x.area);
+    if (areaOf(key)) extra.area = key;
+  }
+  go('sched', extra);
 }
 
 function schedHtml(){
@@ -4047,10 +4150,24 @@ function bookedHtml(){
       'nothing here sends anything.</div>' + extra +
     (S.derr ? '<div class="note warn"><b>The booking landed; the list below may be a moment behind.</b> ' +
               S.derr + '</div>' : '') +
+    /* WHAT COMES NEXT DEPENDS ON WHERE YOU CAME FROM, and until 20 August 2026
+       it did not: this always offered "Back to <the offence's area>" as the
+       middle button, so booking from Detention Sessions ended on a screen
+       inviting you into Latecoming. Worse than a wrong label — it is the
+       second half of the same defect openBooking carried, and pressing it
+       landed you in a worklist you never opened.
+
+       The button you are most likely to want is now first, and the one that
+       makes no sense from where you are is simply absent. */
     '<div class="stack">' +
-      '<button data-go="det">Detention Sessions</button>' +
-      '<button class="ghost" data-go="lc">Back to ' + esc(S.sched ? S.sched.x.area : '') + '</button>' +
-      '<button class="plain" data-go="menu">All areas</button>' +
+      (S.backTo === 'det'
+        ? '<button data-go="det">Back to Detention Sessions</button>' +
+          '<button class="plain" data-go="menu">All areas</button>'
+        : '<button data-go="lc">Back to ' +
+            esc((areaOf(S.area) || {}).title || (S.sched ? S.sched.x.area : 'the list')) +
+          '</button>' +
+          '<button class="ghost" data-go="det">Detention Sessions</button>' +
+          '<button class="plain" data-go="menu">All areas</button>') +
     '</div>' +
   '</div></div>';
 }
@@ -4544,11 +4661,23 @@ function unbookOne(did){
                  'written &mdash; check the tab exists.';
       }
       delete S.attDraft[did];
-      /* THE SESSION SCREEN CAN EMPTY ITSELF. Removing the last student in the
-         room leaves sessHtml with nothing to draw, and it already falls back
-         to the detention list when the room is empty — so the re-read has to
-         land before anything is rendered, which it does. */
-      return refreshDet().then(function(){ render(); });
+      return refreshDet().then(function(){
+        /* THE SESSION SCREEN CAN EMPTY ITSELF. Removing the last student in
+           the room leaves sessHtml with nothing to draw, and it deals with
+           that by returning detHtml() — which draws the right screen while
+           S.view still says 'sess'. Everything downstream then reasons about a
+           screen you are not on: the appbar, the back link, and any future
+           handler that checks S.view. Leaving properly is one line. */
+        if (!roomFor(S.sess).length){
+          var was = S.derr;
+          go('det');
+          S.derr = was;
+          S.flash = 'That was the last student &mdash; the session is empty.';
+          render();
+          return;
+        }
+        render();
+      });
     })
     .catch(function(e){
       S.busy = false;
@@ -4793,7 +4922,7 @@ function diagHtml(){
 function subjectLine(){
   var ds = emailGroups().filter(function(g){ return !g.thu; }).map(function(g){ return g.domain; });
   var what = ds.length ? ds.join(' and ') : 'Thursday privilege';
-  return what + ' follow-up — ' + areaOf(S.area).title + ' — ' + todayLong();
+  return what + ' follow-up — ' + areaTitle() + ' — ' + todayLong();
 }
 
 function plain(html){ return String(html).replace(/<[^>]+>/g,'').replace(/&mdash;/g,'—')
@@ -4914,7 +5043,7 @@ function emailHtml(){
   }).join('');
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
-    '<div class="appbar"><a data-go="lc">&larr; ' + esc(areaOf(S.area).title) + '</a></div>' +
+    '<div class="appbar"><a data-go="lc">&larr; ' + esc(areaTitle()) + '</a></div>' +
     '<h1>Today\'s email</h1>' +
     '<div class="who">' + groups.map(function(g){
         return g.rows.length + ' ' + (g.thu ? 'Thursday privilege' : g.domain);
@@ -4951,7 +5080,7 @@ function record(){
   /* actionTaken is always sent, and it is the tier's own wording — so the
      record says what was asked of the form teacher, not merely that somebody
      was emailed. One batch, one sentence, because one email covers them all. */
-  var action = 'Daily follow-up email to form teachers — ' + areaOf(S.area).title;
+  var action = 'Daily follow-up email to form teachers — ' + areaTitle();
 
   api('hubStamp', {
     token: TOKEN,
@@ -5021,7 +5150,7 @@ function sentHtml(){
       'The counts on the previous screen are still from the last snapshot; ' +
       'they catch up at the next snapshot rebuild.</div>' + extra +
     '<div class="stack">' +
-      '<button data-go="lc">Back to ' + esc(areaOf(S.area).title) + '</button>' +
+      '<button data-go="lc">Back to ' + esc(areaTitle()) + '</button>' +
       '<button class="ghost" data-go="menu">All areas</button>' +
     '</div>' +
   '</div></div>';

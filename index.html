@@ -585,6 +585,10 @@ table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
   border-radius:6px;margin:0 5px 5px 0;background:#efece6;color:var(--muted)}
 .dchip.ok{background:var(--good-tint);color:var(--good)}
 .dchip.bad{background:var(--bad-tint);color:var(--bad);font-weight:600}
+/* A HELD STUDENT WHO HAS GONE ON OFFENDING. The one row on the DM Overview
+   that has to be findable without reading, because the failure mode of a hold
+   is that everybody stops looking at it. */
+.row.flat.warnrow{background:var(--bad-tint)}
 .dchip.warn{background:var(--warn-tint);color:var(--warn);font-weight:600}
 .diag .dline{margin-bottom:5px;color:var(--muted)}
 .spin{flex:0 0 auto;width:19px;height:19px;border-radius:50%;
@@ -776,7 +780,16 @@ var S = {
      offered ten minutes and two screens later is not an undo, it is a
      delete button with a friendly name. */
   lastBook:null,        // { ids:[detentionId], when:'…', n:0 }
-  armUnbook:'',         // detentionId whose remove link is asking "really?" 
+  armUnbook:'',         // detentionId whose remove link is asking "really?"
+
+  /* ── THE DM OVERVIEW ──────────────────────────────────────────────────
+     `esc` holds every escalation ever recorded; the screen's four states are
+     derived from it against the snapshot it already has, never stored. */
+  esc:null,             // the reply from hubEscalations
+  escTried:false,       // asked once, so a failure does not retry on every render
+  escDraft:{},          // rowKey -> { next, reviewOn } while the form is open
+  escOpen:'',           // the rowKey whose form is open, if any
+  dmTab:'now',          // now · held · better 
   sched:null,           // { x, booked, left } — the student being booked
   pickDates:{},         // session date string -> true
   sess:'',              // the session date open for attendance
@@ -1663,6 +1676,11 @@ function refreshAll(){
        replaced, and offering to take back rows the screen can no longer show
        you is how somebody undoes a booking they have forgotten making. */
     S.lastBook = null; S.armUnbook = '';
+    /* THE ESCALATION RECORD AGES TOO, and on this screen a stale one reads as
+       "nothing has been done", which is the one sentence it must never say
+       wrongly. */
+    S.escTried = false; S.esc = null;
+    if (S.view === 'dm') ensureDm();
     S.flash = 'Reloaded ' + nowShort();
     render();
     setTimeout(function(){ S.flash = ''; render(); }, 4000);
@@ -1744,7 +1762,7 @@ function loadAll(){
        a moment where it is outstanding. It was initialised here and reset on
        sign-out but never set true and never read — a leftover from when
        detention was its own call. Removed 4 August 2026. */
-    S.pending = { early:true, groom:false };
+    S.pending = { early:true, groom:false, esc:false };
     /* AFTER, NOT ALONGSIDE. The 4 August measurement is unambiguous: requests
        to this deployment succeed every time when nothing else is talking to
        it and start failing as soon as anything is. So this is fired from the
@@ -1792,6 +1810,41 @@ function loadEarly(){
   }).catch(function(){ S.early = null; });
 }
 
+/* ── ESCALATIONS ARE FETCHED WHEN THE SCREEN OPENS ────────────────────────
+   The same decision grooming got on 4 August and early dismissals on 17
+   August, for the same reason: it fills one screen most sign-ins never open,
+   and sign-in is the path everybody pays for.
+
+   AND IT ASKS FOR GROOMING TOO. The cards show a student's grooming standing,
+   because that IS the cross-domain picture this screen exists for — and the
+   whole-school read is one request, where the per-student one would be one
+   request per card. The two are fired in sequence, never together, because
+   concurrent requests to this deployment are a measured fault. */
+function ensureDm(){
+  var jobs = [];
+  if (!S.escTried && !S.pending.esc) jobs.push(loadEscalations);
+  if (!S.groomTried && !S.pending.groom) jobs.push(function(){
+    S.pending.groom = true;
+    return loadGrooming().then(function(){ S.pending.groom = false; });
+  });
+  if (!jobs.length) return Promise.resolve();
+  return jobs.reduce(function(p, job){
+    return p.then(function(){ return job().then(function(){ render(); }); });
+  }, Promise.resolve());
+}
+
+function loadEscalations(){
+  S.escTried = true; S.pending.esc = true;
+  return api('hubEscalations', { token: TOKEN }).then(function(r){
+    S.pending.esc = false;
+    /* ok:false IS KEPT, NOT FLATTENED. "The tab could not be read" and "there
+       are no escalations yet" are opposite facts that look identical once the
+       reason is thrown away — and on this screen the second is the normal
+       state on day one. */
+    S.esc = (r && r.ok) ? r : (r || null);
+  }).catch(function(){ S.pending.esc = false; S.esc = null; });
+}
+
 function loadGrooming(){
   S.groomTried = true;
   return api('hubGrooming', { token: TOKEN }).then(function(r){
@@ -1828,6 +1881,7 @@ function signOut(){
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
   S.lastBook=null; S.armUnbook='';
+  S.esc=null; S.escTried=false; S.escDraft={}; S.escOpen=''; S.dmTab='now';
   render(true);
 }
 
@@ -1848,6 +1902,10 @@ function go(v, extra){
   if (moved){
     S.lastBook = null; S.armUnbook = '';
     S.err = ''; S.derr = ''; S.flash = '';
+    /* AN OPEN FORM DOES NOT TRAVEL. What is typed into it does — S.escDraft is
+       keyed by row, so coming back to the same student finds the words still
+       there, which is the difference between navigating away and losing work. */
+    S.escOpen = '';
   }
   S.view = v;
   render(moved);
@@ -1874,7 +1932,8 @@ function backFrom(v){
      you to 'lc' checks first and falls back to the menu, because 'lc' with an
      unresolvable area is the blank-render case N4 was about. */
   var toArea = areaOf(S.area) ? 'lc' : 'menu';
-  if (v === 'lc' || v === 'early' || v === 'groom' || v === 'det' || v === 'soon') return 'menu';
+  if (v === 'lc' || v === 'early' || v === 'groom' || v === 'det' || v === 'soon' ||
+      v === 'dm') return 'menu';
   if (v === 'sess')    return 'det';
   if (v === 'student') return (S.from === 'early') ? 'early' : toArea;
   if (v === 'email' || v === 'sent') return toArea;
@@ -1931,6 +1990,7 @@ function render(moved){
   else if (S.view==='early')  html = earlyHtml();
   else if (S.view==='groom')  html = groomHtml();
   else if (S.view==='det')    html = detHtml();
+  else if (S.view==='dm')     html = dmHtml();
   else if (S.view==='sched')  html = schedHtml();
   else if (S.view==='booked') html = bookedHtml();
   else if (S.view==='sess')   html = sessHtml();
@@ -2113,8 +2173,16 @@ function menuHtml(){
 
   var dm = allRows().filter(function(x){ return x.atDM && !isHeld(x); }).length;
   var held = allRows().filter(isHeld).length;
-  rows += '<div class="mrow soon" data-area="__dm"><div class="mt">Discipline Daily Overview' +
-    '<em>counts are live &mdash; the screen is not built yet</em></div>' +
+  /* RENAMED 20 AUGUST 2026, at Kim's instruction. It was "Discipline Daily
+     Overview", which is not daily and is not an overview — it is the serious
+     end of four ladders plus what was done about it. A name that promises a
+     cadence the screen cannot keep is the same fault as the "rebuilds hourly"
+     line deleted on 4 August. */
+  var dmWait = dmWaiting().length;
+  rows += '<div class="mrow ' + (dmWait ? 't5' : '') + '" data-area="__dm">' +
+    '<div class="mt">DM Overview' +
+      (dmWait ? '<em>' + dmWait + ' with nothing recorded against them</em>' : '') +
+    '</div>' +
     big(dm, 'to see the DM') + big(held, 'on hold across all areas') + '</div>';
 
   var tools = '<div class="grouplabel">Open another tool</div><div class="mgrid">' +
@@ -4172,6 +4240,442 @@ function bookedHtml(){
   '</div></div>';
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   THE DM OVERVIEW
+   ═══════════════════════════════════════════════════════════════════════
+
+   The only cross-domain screen, and the sixth worklist rather than a gallery.
+
+   ONE CARD PER STUDENT, NOT PER SNAPSHOT ROW. Somebody at tier 5 for
+   latecoming who also owes two sittings for truancy is one card with two
+   lines, and the columns line up down the card so the eye runs vertically
+   instead of re-reading a sentence each time.
+
+   NOTHING ON THIS SCREEN ADDS UP, AND IT SAYS SO. A student at tier 5 for
+   latecoming and tier 2 for absence is not at tier 7 of anything. There is no
+   total, no combined severity and no single figure per student — the card's
+   severity takes the WORST SINGLE TIER, never a sum.
+
+   ORDERED BY MOVEMENT, NOT BY SEVERITY ALONE. A list ordered purely by tier
+   reads the same on Tuesday as it did on Monday. A list ordered by what has
+   changed is a list somebody opens. */
+
+/** Every DM-boundary row, held ones excluded — they have their own tab. */
+function dmRows(){
+  return allRows().filter(function(x){ return x.atDM && !isHeld(x); });
+}
+
+/** The escalations recorded against one domain-row, oldest first. */
+function escFor(x){
+  var rows = (S.esc && S.esc.ok && S.esc.rows) ? S.esc.rows : [];
+  return rows.filter(function(e){
+    if (String(e.studentId) !== String(x.id)) return false;
+    if (String(e.domain) !== String(x.domain)) return false;
+    /* ANCHORED TO THE OFFENCE, NOT THE STUDENT. Without this a student who
+       reaches the boundary again next term reads as already actioned — the
+       exact fault that let July's sittings cancel an August debt.
+       A row with no anchor is a record from before anchors existed, or one
+       written by hand; it is kept and treated as belonging to the student
+       generally, because dropping it would hide a real escalation. */
+    if (e.sourceEntryId && x.entryId && e.sourceEntryId !== x.entryId) return false;
+    return true;
+  });
+}
+
+/**
+ * WHAT STATE THIS DOMAIN-ROW IS IN. Derived, never stored — the way 🪑
+ * Detention derives carry-over. A stored status is a fifth thing to keep in
+ * step with four others.
+ */
+function escState(x){
+  var mine = escFor(x);
+  if (!mine.length) return { key:'waiting', label:'Nothing recorded', rank:1 };
+
+  var latest = mine[mine.length - 1];
+  if (!latest.reviewOn) {
+    return { key:'actioned', label:'Actioned ' + (latest.on || ''), rank:3, esc:latest };
+  }
+  var when = dparse(latest.reviewOn);
+  if (when && when < midnight()) {
+    return { key:'overdue', label:'Review overdue — ' + longish(latest.reviewOn),
+             rank:0, esc:latest };
+  }
+  return { key:'review', label:'Review due ' + longish(latest.reviewOn), rank:2, esc:latest };
+}
+
+/** The cards, one per student, each holding that student's boundary domains. */
+function dmCards(){
+  var by = {};
+  dmRows().forEach(function(x){
+    if (!by[x.id]) by[x.id] = { id:x.id, name:x.name, cls:x.cls, cohort:x.cohort, lines:[] };
+    by[x.id].lines.push({ x:x, state:escState(x) });
+  });
+
+  return Object.keys(by).map(function(k){
+    var c = by[k];
+    /* THE WORST SINGLE TIER, NEVER A SUM. */
+    c.worst = c.lines.reduce(function(t, l){ return Math.max(t, l.x.tier||0); }, 0);
+    c.rank  = c.lines.reduce(function(r, l){ return Math.min(r, l.state.rank); }, 9);
+    /* HOW LONG THE MOST PRESSING LINE HAS BEEN WAITING, so the ordering inside
+       a state is by staleness rather than by name. */
+    c.quiet = c.lines.reduce(function(q, l){
+      var n = Number(l.x.quiet);
+      return isNaN(n) ? q : Math.min(q, n);
+    }, 9999);
+    c.groom = groomFor(c);
+    return c;
+  }).sort(function(a, b){
+    return (a.rank - b.rank) || (b.worst - a.worst) || (a.quiet - b.quiet) ||
+           String(a.name).localeCompare(String(b.name));
+  });
+}
+
+/** The students with nothing recorded against any of their boundary domains. */
+function dmWaiting(){
+  return dmRows().filter(function(x){ return escState(x).key === 'waiting'; });
+}
+
+/**
+ * A STUDENT'S GROOMING STANDING, matched out of the whole-school read.
+ *
+ * BY STUDENT ID FIRST. The design assumed the grooming tracker keys on name
+ * and class only; it does carry a Student ID, and where it is filled in the
+ * match is exact. The name-and-class fallback is for older rows that predate
+ * it — and where NEITHER matches, the card says so rather than showing a blank,
+ * because on this screen a failed match and a spotless student are the same
+ * picture and opposite facts.
+ */
+function groomFor(card){
+  if (!S.groom) return { state:'unread' };
+  /* ok:false MEANS THE TRACKER WOULD NOT OPEN, which is not the same as a
+     student with nothing against them — and on this screen those two look
+     identical unless they are told apart here. Reporting "no record matched"
+     for a spreadsheet that failed to open would blame the student for the
+     server's problem, which is the fault apiHubGrooming_'s own docblock is
+     about. */
+  if (S.groom.ok === false) return { state:'unread' };
+  if (!S.groom.connected) return { state:'unconnected' };
+  var list = S.groom.students || [];
+  var norm = function(v){ return String(v||'').toUpperCase().replace(/\s+/g,' ').trim(); };
+
+  for (var i = 0; i < list.length; i++){
+    if (list[i].studentId && String(list[i].studentId) === String(card.id)) {
+      return { state:'hit', s:list[i] };
+    }
+  }
+  for (var j = 0; j < list.length; j++){
+    if (norm(list[j].name) === norm(card.name) && norm(list[j].cls) === norm(card.cls)) {
+      return { state:'hit', s:list[j] };
+    }
+  }
+  /* NOT FOUND is not the same as CLEAN, and the grooming tracker matches on a
+     name it may spell differently. Said out loud on the card. */
+  return { state:'none' };
+}
+
+function groomLineHtml(g){
+  if (g.state === 'unread')      return '';
+  if (g.state === 'unconnected') return '';
+  if (g.state === 'none') {
+    return '<div class="s quiet">No grooming record matched this name and class &mdash; ' +
+           'that may mean nothing to report, or a name spelled differently there.</div>';
+  }
+  var s = g.s;
+  if (!s.year) return '';
+  return '<div class="s"><b>Grooming</b> &middot; ' + s.term + ' this term &middot; ' +
+    s.year + ' this year' +
+    (s.open ? ' &middot; <b>' + s.open + ' not yet fixed</b>' : '') +
+    (s.overTerm ? ' <span class="tag t4">over the concern level</span>' : '') +
+    (s.lastDate ? ' &middot; last ' + esc(s.lastDate) : '') + '</div>';
+}
+
+function dmLineHtml(l, cardKey){
+  var x = l.x, st = l.state;
+  var tag = st.key === 'waiting'
+    ? '<span class="tag t5">Nothing recorded</span>'
+    : st.key === 'overdue'
+      ? '<span class="tag t4">' + esc(st.label) + '</span>'
+      : '<span class="tag ' + (st.key === 'review' ? 'thu' : 'ok') + '">' + esc(st.label) + '</span>';
+
+  var key = rowKey(x);
+  var open = S.escOpen === key;
+  var draft = S.escDraft[key] || { next:'', reviewOn:'' };
+
+  return '<div class="row flat" style="align-items:flex-start">' +
+    '<div class="badge">' + (x.tier || '?') + '</div>' +
+    '<div class="body">' +
+      '<div class="p">' + esc(x.domain) + '</div>' +
+      '<div class="meta">Tier ' + esc(x.tier) + ' &middot; ' + x.term + ' this term &middot; ' +
+        x.year + ' this year' +
+        (isFinite(x.quiet) ? ' &middot; last offence ' + quietWords(x.quiet) : '') + '</div>' +
+      '<div class="s">' + esc(actionOf(x.action, x.sessions)) + '</div>' +
+      (x.whoActs ? '<div class="s quiet">Whose task: ' + esc(x.whoActs) + '</div>' : '') +
+      escHistoryHtml(x) +
+      (open
+        ? '<div class="field" style="margin-top:12px;max-width:100%">' +
+            '<label>What happens next</label>' +
+            '<input type="text" data-escnext="' + esc(key) + '" value="' + esc(draft.next) + '" ' +
+              'placeholder="e.g. parents to meet DP on Friday" style="font-size:16px">' +
+            '<div class="s" style="margin-top:6px">An action, not what was said. ' +
+              'The substance of the conversation is deliberately not recorded here.</div>' +
+            '<div style="margin-top:10px"><label>Look again on</label>' +
+              '<input type="text" data-escreview="' + esc(key) + '" value="' + esc(draft.reviewOn) + '" ' +
+                'placeholder="e.g. ' + esc(dstamp(new Date(midnight().getTime() + 21*86400000))) + '" ' +
+                'style="font-size:16px"></div>' +
+            '<div class="s" style="margin-top:6px">Optional. A past date brings them back ' +
+              'to the top of this screen.</div>' +
+          '</div>'
+        : '') +
+    '</div>' +
+    '<div class="tierslot">' + tag +
+      (open
+        ? '<div class="d"><button class="sm" data-escsave="' + esc(key) + '"' +
+            (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Saving&hellip;' : 'Record it') + '</button>' +
+          ' <a data-esccancel="1" style="cursor:pointer;text-decoration:underline">cancel</a></div>'
+        : '<div class="d"><a data-escopen="' + esc(key) + '" style="cursor:pointer;' +
+          'text-decoration:underline">' +
+          (st.key === 'waiting' ? 'Record what was done' : 'Record another') + '</a></div>') +
+    '</div>' +
+  '</div>';
+}
+
+/** Every escalation already on this row, oldest first. A second look is a second row. */
+function escHistoryHtml(x){
+  var mine = escFor(x);
+  if (!mine.length) return '';
+  return '<div class="s" style="margin-top:8px">' + mine.map(function(e){
+    return '<div>&bull; ' + esc(e.on) + ' &middot; ' + esc(e.by || 'somebody') +
+      (e.next ? ' &mdash; ' + esc(e.next) : '') +
+      (e.reviewOn ? ' <span class="tag quiet">look again ' + esc(e.reviewOn) + '</span>' : '') +
+      '</div>';
+  }).join('') + '</div>';
+}
+
+function quietWords(n){
+  if (!isFinite(n)) return 'not recorded';
+  if (n <= 0) return 'today';
+  if (n === 1) return 'yesterday';
+  return n + ' days ago';
+}
+
+function dmHtml(){
+  if (!S.snap) return soonHtml();
+
+  var cards = dmCards();
+  var waiting = dmWaiting().length;
+
+  /* GETTING BETTER IS NOT A DISCHARGE. A full week with no new offence IN THE
+     DOMAIN THAT BROUGHT THEM HERE — never across the card. They keep their
+     tier and everything they owe; this is the difference between a student who
+     is drifting and one who has stopped, which is a thing to know BEFORE a
+     conversation rather than after it. */
+  var better = cards.filter(function(c){
+    return c.lines.every(function(l){ return Number(l.x.quiet) >= 7; });
+  });
+  var live = cards.filter(function(c){
+    return c.lines.some(function(l){ return !(Number(l.x.quiet) >= 7); });
+  });
+
+  var heldRows = allRows().filter(isHeld).sort(function(a, b){
+    var da = dparse(a.heldOn), db = dparse(b.heldOn);
+    return (da && db) ? (da - db) : String(a.name).localeCompare(String(b.name));
+  });
+
+  var body = '';
+  if (S.dmTab === 'held')       body = dmHeldHtml(heldRows);
+  else if (S.dmTab === 'better') body = dmListHtml(better, 'Nobody has been quiet for a week.');
+  else                          body = dmListHtml(live, 'Nobody is at the DM boundary.');
+
+  return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="appbar"><a data-go="menu">&larr; All areas</a><span>&middot;</span>' +
+      '<span>Signed in as ' + esc(S.user) + '</span>' +
+      (S.flash ? '<span>&middot;</span><span class="flash">' + esc(S.flash) + '</span>' : '') +
+    '</div>' +
+    (S.err ? '<div class="note warn">' + S.err + '</div>' : '') +
+    '<div class="date">DM Overview ' + builtHtml() + '</div>' +
+    '<h1>DM Overview</h1>' +
+    '<div class="lede">Everyone who has reached the point where the DM, DP or Principal is ' +
+      'involved &mdash; across every ladder at once &mdash; and what has been done about it.</div>' +
+
+    /* THE SENTENCE THAT KEEPS THE SCREEN HONEST, and it is on the screen
+       rather than in a comment because the reader is the person who would
+       otherwise add the numbers up. */
+    '<div class="note"><b>Nothing on this screen adds up.</b> A student at tier 5 for ' +
+      'latecoming and tier 2 for absence is not at tier 7 of anything. Each line is its own ' +
+      'ladder, and the colour of a card is its worst single tier.</div>' +
+
+    (S.pending.esc ? readingHtml('the escalation record') : '') +
+    (S.esc && S.esc.ok === false
+      ? '<div class="note warn"><b>The escalation record could not be read.</b> ' +
+        esc(S.esc.error || '') + ' Everything above is still true; what is missing is what ' +
+        'was <i>done</i> about it, so every line below will read as though nothing has been.</div>'
+      : '') +
+
+    '<div class="tabs">' +
+      '<a class="' + (S.dmTab==='now'?'on':'') + '" data-dmtab="now">At the boundary' +
+        (waiting ? ' <b>' + waiting + '</b>' : '') + '</a>' +
+      '<a class="' + (S.dmTab==='held'?'on':'') + '" data-dmtab="held">On hold' +
+        (heldRows.length ? ' <b>' + heldRows.length + '</b>' : '') + '</a>' +
+      '<a class="' + (S.dmTab==='better'?'on':'') + '" data-dmtab="better">Getting better' +
+        (better.length ? ' <b>' + better.length + '</b>' : '') + '</a>' +
+    '</div>' +
+    body +
+    dmFaultsHtml() +
+  '</div></div>';
+}
+
+function dmListHtml(cards, emptyWords){
+  if (!cards.length) return '<div class="blank">' + esc(emptyWords) + '</div>';
+  return '<div class="rows">' + cards.map(function(c){
+    /* `open` ALWAYS. .foldb is display:none until .fold.open, and these cards
+       do not collapse — the boundary list is a handful of students and hiding
+       what is wrong with them behind a click is the opposite of what the
+       screen is for. cursor:default because .foldh promises a toggle there
+       is not. */
+    return '<div class="fold open ' + sevClass(c.worst) + '" style="margin-bottom:14px">' +
+      '<div class="foldh" style="cursor:default"><div>' +
+        '<div class="p">' + esc(c.name) + '</div>' +
+        '<div class="meta">' + esc(c.cls) + ' &middot; ' + esc(c.cohort) +
+          ' &middot; ' + c.lines.length + ' ladder' + (c.lines.length===1?'':'s') +
+          ' at the boundary</div>' +
+        groomLineHtml(c.groom) +
+      '</div></div>' +
+      '<div class="foldb">' + c.lines.map(function(l){ return dmLineHtml(l, c.id); }).join('') +
+      '</div></div>';
+  }).join('') + '</div>';
+}
+
+/**
+ * HOLDS BELONG HERE, and nowhere else shows them. Every worklist excludes a
+ * held row by design, which is right — and it means the failure mode of a hold
+ * is that everybody stops looking at it.
+ *
+ * THE FIGURE THAT MATTERS is whether they have gone on offending SINCE. Days
+ * since last offence against held since answers that without anyone opening a
+ * sheet. Oldest first: a three-week-old hold on a student who has offended
+ * twice since is the first thing on the page.
+ */
+function dmHeldHtml(rows){
+  if (!rows.length) return '<div class="blank">Nobody is on hold.</div>';
+  return '<div class="rows">' + rows.map(function(x){
+    var since = dparse(x.heldOn);
+    var days = since ? Math.round((midnight() - since) / 86400000) : null;
+    var offendedSince = (days !== null && isFinite(x.quiet) && x.quiet < days);
+    return '<div class="row flat' + (offendedSince ? ' warnrow' : '') + '">' +
+      '<div class="badge">' + (x.tier || '?') + '</div>' +
+      '<div class="body"><div class="p">' + esc(x.name) + '</div>' +
+      '<div class="meta">' + esc(x.cls) + ' &middot; ' + esc(x.domain) +
+        ' &middot; tier ' + esc(x.tier) + '</div>' +
+      '<div class="s">Held by ' + esc(x.heldBy || 'somebody') +
+        (x.heldOn ? ' since ' + esc(x.heldOn) : '') +
+        (days !== null ? ' &mdash; ' + days + ' day' + (days===1?'':'s') + ' ago' : '') + '</div>' +
+      (x.heldWhy ? '<div class="s quiet">' + esc(x.heldWhy) + '</div>' : '') +
+      (offendedSince
+        ? '<div class="s"><b>Has offended since the hold was raised</b> &mdash; last ' +
+          quietWords(x.quiet) + '.</div>'
+        : '') +
+      '</div>' +
+      '<div class="tierslot"><span class="tag ' + (offendedSince ? 't4' : 'quiet') + '">' +
+        (offendedSince ? 'Still moving' : 'Quiet') + '</span></div>' +
+    '</div>';
+  }).join('') + '</div>';
+}
+
+/**
+ * THREE FAULTS THIS SCREEN IS UNIQUELY PLACED TO CATCH, all of the "nobody
+ * owes negative sittings" shape. None needs new data; all three are one filter
+ * over rows already in the browser.
+ */
+function dmFaultsHtml(){
+  var out = [];
+
+  var atDMnoFollow = allRows().filter(function(x){ return x.atDM && !x.follows; });
+  if (atDMnoFollow.length) {
+    out.push('<b>' + atDMnoFollow.length + ' row(s) reach the DM but say the committee does ' +
+      'not follow them up.</b> They appear here and on no worklist. That may be deliberate; ' +
+      'it is unusual enough to say. Check <i>DC follows up</i> on 🪜 Ladders.');
+  }
+
+  var noCohort = dmRows().filter(function(x){ return !x.cohort; });
+  if (noCohort.length) {
+    out.push('<b>' + noCohort.length + ' student(s) at the boundary resolve to no cohort</b>, ' +
+      'so they appear in none of the four areas above. Their class is missing from the Master ' +
+      'Database, or spelled differently there.');
+  }
+
+  if (S.groom && S.groom.connected) {
+    var unmatched = dmCards().filter(function(c){ return c.groom.state === 'none'; }).length;
+    if (unmatched) {
+      out.push(unmatched + ' of these students could not be matched in the Grooming Tracker. ' +
+        'It matches on Student ID where it has one and on name and class otherwise, so a ' +
+        'different spelling there reads as nothing to report.');
+    }
+  }
+
+  if (!out.length) return '';
+  return '<div class="note warn" style="margin-top:20px">' +
+    out.map(function(t){ return '<div style="margin-bottom:8px">' + t + '</div>'; }).join('') +
+    '</div>';
+}
+
+/**
+ * RECORDS THAT AN ESCALATION WAS ACTIONED.
+ *
+ * NOT RETRIED. It is a write, and the same reasoning that keeps hubSchedule
+ * out of RETRY_SAFE applies: a lost reply is not a lost write, and a duplicate
+ * escalation row is a second entry in a record that is supposed to read in
+ * order.
+ */
+function recordEscalation(key){
+  if (S.busy) return;
+  var line = null;
+  dmRows().forEach(function(x){ if (rowKey(x) === key) line = x; });
+  if (!line){ S.err = 'That row is no longer on the list &mdash; reload.'; render(); return; }
+
+  readEscDraft();
+  var draft = S.escDraft[key] || { next:'', reviewOn:'' };
+
+  S.busy = true; S.err = ''; render();
+  api('hubEscalate', {
+    token: TOKEN, by: S.user,
+    studentId: line.id, name: line.name, cls: line.cls,
+    domain: line.domain, term: line.termNo, tier: line.tier,
+    sourceEntryId: line.entryId,
+    next: draft.next, reviewOn: draft.reviewOn
+  }).then(function(res){
+    S.busy = false;
+    if (!res || !res.ok){ S.err = esc((res && res.error) || 'Nothing was recorded.'); render(); return; }
+    S.escOpen = '';
+    delete S.escDraft[key];
+    S.flash = 'Recorded for ' + line.name + ' · ' + line.domain;
+    /* RE-READ RATHER THAN MIRROR. Appending the row locally would mean this
+       screen believed something nobody had confirmed, and the mirror would
+       drift the first time the server changed a default. */
+    S.escTried = false;
+    return loadEscalations().then(function(){ render(); });
+  }).catch(function(e){
+    S.busy = false;
+    S.err = reachErr(e, 'record that escalation') +
+      ' Reload before trying again &mdash; it may already be there.';
+    render();
+  });
+}
+
+/* THE FIELDS ARE READ OFF THE DOM, NOT MIRRORED ON EVERY KEYSTROKE. The
+   session screen learned this the hard way on 12 August: a field that
+   re-renders as you type loses the caret, and a field that does not
+   re-render must be read before it is used. */
+function readEscDraft(){
+  var n = document.querySelector('[data-escnext]');
+  var r = document.querySelector('[data-escreview]');
+  if (!n) return;
+  var key = n.getAttribute('data-escnext');
+  S.escDraft[key] = {
+    next: String(n.value || '').trim(),
+    reviewOn: r ? String(r.value || '').trim() : ''
+  };
+}
+
 /* ── the Detention Sessions area ──────────────────────────────────────── */
 function detHtml(){
   if (!detOk()){
@@ -5374,6 +5878,28 @@ function wire(){
     var dtab = t.closest && t.closest('[data-dtab]');
     if (dtab){ S.dtab = dtab.getAttribute('data-dtab'); render(); return; }
 
+    /* THE DM OVERVIEW. Its tabs and its one write. `readEscDraft` runs before
+       anything that redraws, because the two text fields are deliberately not
+       mirrored on every keystroke and would otherwise be lost. */
+    var dmtab = t.closest && t.closest('[data-dmtab]');
+    if (dmtab){ readEscDraft(); S.dmTab = dmtab.getAttribute('data-dmtab'); S.escOpen = ''; render(); return; }
+
+    var escOpen = t.closest && t.closest('[data-escopen]');
+    if (escOpen){
+      e.stopPropagation();
+      readEscDraft();
+      S.escOpen = escOpen.getAttribute('data-escopen');
+      S.err = ''; render();
+      var box = document.querySelector('[data-escnext]');
+      if (box) box.focus();
+      return;
+    }
+    var escCancel = t.closest && t.closest('[data-esccancel]');
+    if (escCancel){ e.stopPropagation(); readEscDraft(); S.escOpen = ''; render(); return; }
+
+    var escSave = t.closest && t.closest('[data-escsave]');
+    if (escSave){ e.stopPropagation(); recordEscalation(escSave.getAttribute('data-escsave')); return; }
+
     /* A TICK TOGGLES AND NOTHING ELSE. Checked before the row's own handler,
        because the tick sits inside the row and the row opens a student — so
        without this, ticking somebody would navigate away from the list you are
@@ -5428,6 +5954,7 @@ function wire(){
       if (key === '__early'){ go('early'); return; }
       if (key === '__groom'){ ensureGrooming(); go('groom'); return; }
       if (key === '__det'){ S.dtab = 'next'; go('det'); return; }
+      if (key === '__dm'){ S.dmTab = 'now'; ensureDm(); go('dm'); return; }
       var a = areaOf(key);
       if (a && a.built) openArea(key); else go('soon');
       return;

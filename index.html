@@ -1723,12 +1723,25 @@ function loadAll(){
        S.det goes through detOk(), which treats ok:false and null alike. */
     S.det   = (res.detention && res.detention.ok) ? res.detention : (res.detention || null);
     _actCache = null;      // a new snapshot may carry a new ladder table
-    S.early = (res.early && res.early.ok) ? res.early : null;
+    /* NOT IN THIS REPLY ANY MORE — see the note in apiHubAll_. It is fetched
+       immediately afterwards, on its own, so the menu draws without waiting
+       for a read of the whole Log. `pending.early` is what makes the row say
+       "reading the green slip record…" rather than "could not be read": those
+       are opposite facts and a null cannot tell them apart. */
+    S.early = null;
     /* No `det` key: detention arrives with this same reply, so there is never
        a moment where it is outstanding. It was initialised here and reset on
        sign-out but never set true and never read — a leftover from when
        detention was its own call. Removed 4 August 2026. */
-    S.pending = { early:false, groom:false };
+    S.pending = { early:true, groom:false };
+    /* AFTER, NOT ALONGSIDE. The 4 August measurement is unambiguous: requests
+       to this deployment succeed every time when nothing else is talking to
+       it and start failing as soon as anything is. So this is fired from the
+       tail of a reply that has already landed, which is sequential, not
+       concurrent — the same shape as the student page's two reads. */
+    setTimeout(function(){
+      loadEarly().then(function(){ S.pending.early = false; render(); });
+    }, 0);
   });
 }
 

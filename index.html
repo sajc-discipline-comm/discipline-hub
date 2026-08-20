@@ -771,6 +771,12 @@ var S = {
      called `booking`, and why the tick lives in state rather than in the DOM.
      The next screen that needs it takes the same three lines. */
   pick:{}, pickDate:'', flash:'',
+  /* THE BATCH JUST BOOKED, so it can be taken back without hunting for the
+     rows. Held only until you navigate away or reload — an undo that is still
+     offered ten minutes and two screens later is not an undo, it is a
+     delete button with a friendly name. */
+  lastBook:null,        // { ids:[detentionId], when:'…', n:0 }
+  armUnbook:'',         // detentionId whose remove link is asking "really?" 
   sched:null,           // { x, booked, left } — the student being booked
   pickDates:{},         // session date string -> true
   sess:'',              // the session date open for attendance
@@ -1653,6 +1659,10 @@ function refreshAll(){
        dropped rather than carried across a reload and applied to whatever now
        occupies those keys. */
     clearPicks();
+    /* A RELOAD ENDS THE UNDO. The list it was booked from has just been
+       replaced, and offering to take back rows the screen can no longer show
+       you is how somebody undoes a booking they have forgotten making. */
+    S.lastBook = null; S.armUnbook = '';
     S.flash = 'Reloaded ' + nowShort();
     render();
     setTimeout(function(){ S.flash = ''; render(); }, 4000);
@@ -1690,6 +1700,7 @@ function bookPicked(){
       S.busy = false;
       if (!res || !res.ok){ S.err = (res && res.error) || 'Nothing was booked.'; render(); return; }
       clearPicks();
+      S.lastBook = { ids: res.detentionIds || [], when: when, n: res.booked };
       S.flash = res.booked + ' booked into ' + longish(when) +
         (res.clashed && res.clashed.length
           ? ' · ' + res.clashed.length + ' already had a sitting that day and were left alone'
@@ -1816,6 +1827,7 @@ function signOut(){
   S.gstu=null; S.gLoading=false; S.groomTried=false;
   S.err=''; S.first=true; S.result=null; S.name='';
   S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
+  S.lastBook=null; S.armUnbook='';
   render(true);
 }
 
@@ -1823,6 +1835,11 @@ function signOut(){
 function go(v, extra){
   var moved = (S.view !== v) || !!extra;
   if (extra) for (var k in extra) S[k] = extra[k];
+  /* THE UNDO DOES NOT TRAVEL. It belongs to the list you booked from and to
+     the moment you booked it; carried across a screen change it becomes a
+     delete button for rows you can no longer see. Armed removes are dropped
+     with it, so nothing is left half-confirmed. */
+  if (moved){ S.lastBook = null; S.armUnbook = ''; }
   S.view = v;
   render(moved);
 }
@@ -4219,6 +4236,12 @@ function detHtml(){
          see a change was to sign out and back in. */
       '<a id="refreshall">' + (S.busy ? 'Reloading…' : '↻ Reload') + '</a>' +
       (S.flash ? '<span>&middot;</span><span class="flash">' + esc(S.flash) + '</span>' : '') +
+      /* OFFERED ONLY WHILE IT IS STILL THE THING THAT JUST HAPPENED. Cleared
+         by a reload, by leaving the screen, and by signing out. */
+      (S.lastBook && S.lastBook.ids.length && !S.busy
+        ? '<span>&middot;</span><a id="unbookbatch" style="cursor:pointer;text-decoration:underline">' +
+          'Undo &mdash; take those ' + S.lastBook.n + ' back</a>'
+        : '') +
       '</div>' +
     (S.err ? '<div class="note warn">' + esc(S.err) + '</div>' : '') +
     '<div class="date">Detention Sessions ' + builtHtml() + '</div>' +
@@ -4340,7 +4363,22 @@ function sessHtml(){
         (d.att
           ? '<div class="d"><span class="tag ' + (d.att===ATT_OK?'ok':'t4') + '">' + esc(d.att) + '</span>' +
             ' <a data-clear="' + esc(d.did) + '" style="cursor:pointer;text-decoration:underline">clear</a></div>'
-          : '<div class="d"><span class="tag quiet">Not marked</span></div>') +
+          /* REMOVE IS OFFERED ONLY ON AN UNMARKED ROW, and the server enforces
+             the same rule rather than trusting this. A marked row is a record
+             of something that happened; clearing the mark first is a
+             deliberate second act, which is the point.
+
+             ASKED TWICE, WITHOUT A DIALOG. The link arms itself and the second
+             click does it — a delete a thumb can reach on a phone must not be
+             one a thumb can reach by accident. */
+          : '<div class="d"><span class="tag quiet">Not marked</span>' +
+            (S.armUnbook === d.did
+              ? ' &middot; <a data-unbookgo="' + esc(d.did) + '" style="cursor:pointer;' +
+                'text-decoration:underline;color:var(--bad,#c0392b)"><b>Really remove?</b></a>' +
+                ' &middot; <a data-unbookno="1" style="cursor:pointer;text-decoration:underline">keep</a>'
+              : ' &middot; <a data-unbook="' + esc(d.did) + '" style="cursor:pointer;' +
+                'text-decoration:underline">remove</a>') +
+            '</div>') +
       '</div>' +
     '</div>';
   }).join('');
@@ -4466,6 +4504,64 @@ function clearAttendance(did){
       refreshDet().then(function(){ render(); });
     }).catch(function(e){
       S.busy = false; S.err = reachErr(e, 'clear the attendance'); render();
+    });
+}
+
+/* ── TAKING A BOOKING BACK ────────────────────────────────────────────────
+   The row is DELETED, not marked cancelled — a booking writes to 🪑 Detention
+   and nowhere else, so removing the row puts the world back as it was and the
+   debt returns on its own, because what is owed is derived from that tab
+   rather than stored. See the note on apiHubUnschedule_ for the trade that
+   was made and what it costs.
+
+   NOT RETRIED, for the same reason hubSchedule is not: it is a write, and a
+   lost reply is not a lost write. Both of these say so on screen and reload
+   rather than trying again. */
+function unbookOne(did){
+  if (S.busy) return;
+  S.busy = true; S.err = ''; S.armUnbook = ''; render();
+  api('hubUnschedule', { token: TOKEN, detentionId: did })
+    .then(function(res){
+      S.busy = false;
+      if (!res || !res.ok){ S.err = esc((res && res.error) || 'Nothing was removed.'); render(); return; }
+      delete S.attDraft[did];
+      /* THE SESSION SCREEN CAN EMPTY ITSELF. Removing the last student in the
+         room leaves sessHtml with nothing to draw, and it already falls back
+         to the detention list when the room is empty — so the re-read has to
+         land before anything is rendered, which it does. */
+      return refreshDet().then(function(){ render(); });
+    })
+    .catch(function(e){
+      S.busy = false;
+      S.err = reachErr(e, 'remove that booking') +
+        ' Reopen the session before trying again &mdash; it may already be gone.';
+      render();
+    });
+}
+
+/* THE WHOLE BATCH, while it is still the thing that just happened. Any of
+   those forty may have been marked in the meantime by somebody else; those
+   are refused individually and named, and the rest still go. */
+function unbookBatch(){
+  if (S.busy || !S.lastBook || !S.lastBook.ids.length) return;
+  var batch = S.lastBook;
+  S.busy = true; S.err = ''; render();
+  api('hubUnschedule', { token: TOKEN, detentionIds: batch.ids })
+    .then(function(res){
+      S.busy = false;
+      S.lastBook = null;
+      if (!res || !res.ok){ S.err = esc((res && res.error) || 'Nothing was removed.'); render(); return; }
+      S.flash = res.removed + ' taken back out of ' + longish(batch.when) +
+        (res.refused && res.refused.length
+          ? ' \u00b7 ' + res.refused.length + ' had already been marked and were left alone'
+          : '');
+      return loadAll().then(function(){ render(); });
+    })
+    .catch(function(e){
+      S.busy = false; S.lastBook = null;
+      S.err = reachErr(e, 'take those bookings back') +
+        ' Reload before trying again &mdash; some of them may already be gone.';
+      render();
     });
 }
 
@@ -5145,6 +5241,16 @@ function wire(){
 
     var clr = t.closest && t.closest('[data-clear]');
     if (clr){ e.stopPropagation(); clearAttendance(clr.getAttribute('data-clear')); return; }
+
+    /* ARM, CONFIRM, CANCEL — three links, checked before the row's own
+       handler, because they sit inside a row that opens a student. */
+    var unb = t.closest && t.closest('[data-unbook]');
+    if (unb){ e.stopPropagation(); S.armUnbook = unb.getAttribute('data-unbook'); S.err=''; render(); return; }
+    var unbNo = t.closest && t.closest('[data-unbookno]');
+    if (unbNo){ e.stopPropagation(); S.armUnbook = ''; render(); return; }
+    var unbGo = t.closest && t.closest('[data-unbookgo]');
+    if (unbGo){ e.stopPropagation(); unbookOne(unbGo.getAttribute('data-unbookgo')); return; }
+    if (t.id === 'unbookbatch'){ unbookBatch(); return; }
 
     var sess = t.closest && t.closest('[data-sess]');
     if (sess){ S.attDraft = {}; S.err=''; go('sess', { sess: sess.getAttribute('data-sess') }); return; }

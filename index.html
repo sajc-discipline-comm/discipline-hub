@@ -4374,8 +4374,20 @@ function sessHtml(){
           : '<div class="d"><span class="tag quiet">Not marked</span>' +
             (S.armUnbook === d.did
               ? ' &middot; <a data-unbookgo="' + esc(d.did) + '" style="cursor:pointer;' +
-                'text-decoration:underline;color:var(--bad,#c0392b)"><b>Really remove?</b></a>' +
-                ' &middot; <a data-unbookno="1" style="cursor:pointer;text-decoration:underline">keep</a>'
+                'text-decoration:underline;color:var(--bad)"><b>Really remove?</b></a>' +
+                ' &middot; <a data-unbookno="1" style="cursor:pointer;text-decoration:underline">keep</a>' +
+                /* THE FORK, NAMED AT THE MOMENT SOMEBODY IS ABOUT TO TAKE THE
+                   WRONG ONE. Remove is the easiest-looking control on this
+                   screen, so without this it becomes how people excuse a
+                   student — and an excuse recorded as a deleted booking has no
+                   reason attached to it and no state. Overturning the offence
+                   already refuses without a reason; this points at it. */
+                '<div class="s" style="margin-top:8px;max-width:320px">' +
+                  'This only un-books the afternoon. ' + esc(String(d.name || '').split(' ')[0] || 'She') +
+                  ' still owes the sitting and it will come back on <b>To book</b>. ' +
+                  'If she should not have to serve it at all, <b>overturn the offence</b> ' +
+                  'on her page instead &mdash; that asks for a reason and records it.' +
+                '</div>'
               : ' &middot; <a data-unbook="' + esc(d.did) + '" style="cursor:pointer;' +
                 'text-decoration:underline">remove</a>') +
             '</div>') +
@@ -4520,10 +4532,17 @@ function clearAttendance(did){
 function unbookOne(did){
   if (S.busy) return;
   S.busy = true; S.err = ''; S.armUnbook = ''; render();
-  api('hubUnschedule', { token: TOKEN, detentionId: did })
+  api('hubUnschedule', { token: TOKEN, by: S.user, detentionId: did })
     .then(function(res){
       S.busy = false;
       if (!res || !res.ok){ S.err = esc((res && res.error) || 'Nothing was removed.'); render(); return; }
+      /* THE BOOKING IS GONE EITHER WAY. Said out loud rather than swallowed,
+         because the whole reason the note exists is somebody asking about this
+         in six months, and a note nobody knows is missing is worse than none. */
+      if (res.noted === false){
+        S.derr = 'The booking was removed, but the line in 📝 Record of Changes could not be ' +
+                 'written &mdash; check the tab exists.';
+      }
       delete S.attDraft[did];
       /* THE SESSION SCREEN CAN EMPTY ITSELF. Removing the last student in the
          room leaves sessHtml with nothing to draw, and it already falls back
@@ -4546,11 +4565,15 @@ function unbookBatch(){
   if (S.busy || !S.lastBook || !S.lastBook.ids.length) return;
   var batch = S.lastBook;
   S.busy = true; S.err = ''; render();
-  api('hubUnschedule', { token: TOKEN, detentionIds: batch.ids })
+  api('hubUnschedule', { token: TOKEN, by: S.user, detentionIds: batch.ids })
     .then(function(res){
       S.busy = false;
       S.lastBook = null;
       if (!res || !res.ok){ S.err = esc((res && res.error) || 'Nothing was removed.'); render(); return; }
+      if (res.noted === false){
+        S.err = 'Those bookings were removed, but the lines in 📝 Record of Changes could not ' +
+                'be written &mdash; check the tab exists.';
+      }
       S.flash = res.removed + ' taken back out of ' + longish(batch.when) +
         (res.refused && res.refused.length
           ? ' \u00b7 ' + res.refused.length + ' had already been marked and were left alone'

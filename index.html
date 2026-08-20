@@ -627,9 +627,26 @@ table.bracket tr.here td:last-child{border-right:2px solid var(--accent)}
 
 var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3ZySAGT4LHV-R4KfB00PGdXL8fu569vrvvUUpzxF8nrhyIw/exec';
 
+/* ── WHICH BUILD OF THIS PAGE AM I LOOKING AT? ────────────────────────────
+   Added 20 August 2026, after Kim asked whether she had applied a patch and
+   the only way to answer was to grep a file.
+
+   THE STAMP UNDER THE TITLE IS NOT THIS. That one says when 📸 Snapshot was
+   last rebuilt, which is a fact about the DATA. This is a fact about the PAGE,
+   and a browser holding a cached copy of last week's Hub shows a perfectly
+   fresh snapshot age while being a week out of date — the two cannot
+   substitute for each other.
+
+   The .gs files have carried BUILD since July for exactly this reason, and it
+   caught a round shipping with the previous round's stamp on 11 August. This
+   is the same idea, with one improvement: a test refuses to pass when the date
+   here is older than the newest dated note in this file, so forgetting to bump
+   it is a failure rather than a thing nobody notices. */
+var HUB_BUILD = '20 August 2026 · DM Overview · take a booking back · navigation · the Back button';
+
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
-   into the spreadsheet: Attendance → ⚙️ Setup and repair → 🔐 Set the Google
+   into the spreadsheet: 🎓 Discipline Tools → 🔧 Bring an older sheet up to date → 🔐 Set the Google
    client ID. Both are needed and they must match — the page uses it to ask
    Google for a token, and the server uses it to check that the token it
    receives was minted for THIS application and not for some other site.
@@ -2014,6 +2031,7 @@ function signinHtml(){
   return '<div class="screen centre' + (S.first ? '' : ' still') + '"><div class="wrap">' +
     '<div class="date">' + esc(todayLong()) + '</div>' +
     '<h1 class="big">SAJC Discipline Committee Hub</h1>' +
+    '<div class="s quiet">Hub build ' + esc(HUB_BUILD) + '</div>' +
     '<div class="gap"></div>' +
     /* ── GOOGLE FIRST, PASSWORD BENEATH ───────────────────────────────
        Both are shown while the change beds in. The password is the fallback
@@ -2185,6 +2203,9 @@ function menuHtml(){
     '</div>' +
     big(dm, 'to see the DM') + big(held, 'on hold across all areas') + '</div>';
 
+  var build = '<div class="s quiet" style="margin-top:34px;text-align:center">' +
+    'Hub build ' + esc(HUB_BUILD) + '</div>';
+
   var tools = '<div class="grouplabel">Open another tool</div><div class="mgrid">' +
     TOOLS.map(function(t){
       return '<div class="mtile" data-url="' + esc(t.u) + '"><h3>' + t.t + '</h3>' +
@@ -2202,7 +2223,7 @@ function menuHtml(){
     '<div class="who">Signed in as ' + esc(S.user) +
       (S.email ? ' &middot; <b>' + esc(S.email) + '</b>' :
                  ' &middot; <i>committee password</i>') + '</div>' +
-    '<div class="mrows">' + rows + '</div>' + tools +
+    '<div class="mrows">' + rows + '</div>' + tools + build +
     /* NO INTERVAL IN THIS SENTENCE, DELIBERATELY. It said "rebuilds hourly"
        until 4 August 2026, when the trigger had run every ten minutes for as
        long as it had existed. Naming a number here means a Config change has
@@ -3402,7 +3423,7 @@ function groomHtml(){
       '<div class="lede">' + esc(d.error || '') + '</div>' +
       '<div class="lede">Open the SAJC Grooming Tracker, copy the long code out of its address ' +
         'bar &mdash; the part between <i>/d/</i> and <i>/edit</i> &mdash; and paste it into ' +
-        '&#9881;&#65039; Config in the Attendance Tracker, against <i>Grooming Tracker ID</i>. ' +
+        '&#9881;&#65039; Config in the Master Tracker, against <i>Grooming Tracker ID</i>. ' +
         'Nothing needs redeploying.</div>' +
       '<div class="stack"><button id="gretry">Try again</button>' +
       '<button class="plain" data-go="menu">Back to all areas</button></div>' +
@@ -5559,7 +5580,7 @@ function emailHtml(){
               '<u>no Teacher IDs</u> against ' + (r.noIds.length===1?'it':'them') + '.</b> ' +
               'The Master opened and returned the ' + (r.noIds.length===1?'class':'classes') +
               ' &mdash; columns <b>F to I</b> of Class Allocations are empty on those rows. ' +
-              'Run <b>📋 Attendance → 🔍 Check for problems</b>, which counts the class teachers ' +
+              'Run <b>📋 🎓 Discipline Tools → 🔍 Check for problems</b>, which counts the class teachers ' +
               'it can see.' + diagHtml() + '</div>';
     if (r.unresolved.length)
       warn += '<div class="note err"><b>' + esc(r.unresolved.join(', ')) +
@@ -6048,6 +6069,7 @@ function loadTeachers(){
 
 /* Exposed for the automated checks only. */
 window.__hub = S;
+window.__hubBuild = HUB_BUILD;
 window.__hubRender = render;
 window.__hubWorklist = worklist;
 window.__hubRecipients = recipients;

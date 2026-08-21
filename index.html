@@ -642,7 +642,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '20 August 2026 · DM Overview · take a booking back · navigation · the Back button';
+var HUB_BUILD = '21 August 2026 · DM Overview in one list · how grooming was matched · take a booking back';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -2789,7 +2789,18 @@ function groomStudentHtml(){
       '<div class="tla"></div></div>';
   }).join('');
 
-  return '<div class="gsec"><div class="gfig">' +
+  /* SAID ONLY WHEN IT IS THE FRAGILE PATH. Where the Student ID matched there
+     is nothing to warn about; where it did not, this record is being held on
+     by the spelling of a name, and one correction in either book detaches it
+     silently. Added 21 August 2026, with the fallback that made it possible. */
+  var byName = d.matchedBy === 'name'
+    ? '<div class="note">These were matched to this student <b>by name and class</b> &mdash; ' +
+      'the Student ID on those rows does not match the one in the Master Database. The record ' +
+      'is right, but it is one spelling change away from disappearing. Correcting the ID on ' +
+      'the Grooming Tracker&rsquo;s Log fixes it for good.</div>'
+    : '';
+
+  return byName + '<div class="gsec"><div class="gfig">' +
       '<div><b>' + d.term + '</b><span>this term</span></div>' +
       '<div><b>' + d.year + '</b><span>this year</span></div>' +
       '<div><b>' + d.open + '</b><span>not yet fixed</span></div>' +
@@ -4340,14 +4351,21 @@ function dmCards(){
     /* HOW LONG THE MOST PRESSING LINE HAS BEEN WAITING, so the ordering inside
        a state is by staleness rather than by name. */
     c.quiet = c.lines.reduce(function(q, l){
-      var n = Number(l.x.quiet);
+      var n = quietDays(l.x);
       return isNaN(n) ? q : Math.min(q, n);
     }, 9999);
     c.groom = groomFor(c);
+    /* STILL MOVING, OR STOPPED. A full week with no new offence IN THE DOMAIN
+       THAT BROUGHT THEM HERE — never across the card, because a student who has
+       stopped being late and started being absent has not stopped. */
+    c.moving = c.lines.some(function(l){ return !(quietDays(l.x) >= 7); });
     return c;
   }).sort(function(a, b){
-    return (a.rank - b.rank) || (b.worst - a.worst) || (a.quiet - b.quiet) ||
-           String(a.name).localeCompare(String(b.name));
+    /* State first — an overdue review is work already owed. Then whether they
+       have stopped, which is the difference between a conversation that is
+       urgent and one that can wait a day. */
+    return (a.rank - b.rank) || (b.moving - a.moving) || (b.worst - a.worst) ||
+           (a.quiet - b.quiet) || String(a.name).localeCompare(String(b.name));
   });
 }
 
@@ -4378,15 +4396,25 @@ function groomFor(card){
   if (!S.groom.connected) return { state:'unconnected' };
   var list = S.groom.students || [];
   var norm = function(v){ return String(v||'').toUpperCase().replace(/\s+/g,' ').trim(); };
+  /* PUNCTUATION IS NOT PART OF THE IDENTITY. 2025-0043 and 20250043 are the
+     same student written by two hands, and no two real ids collide once the
+     dashes come off. Tried only after an exact match has failed, so an exact
+     answer is never overruled by a loose one. */
+  var bare = function(v){ return norm(v).replace(/[^A-Z0-9]/g,''); };
 
   for (var i = 0; i < list.length; i++){
-    if (list[i].studentId && String(list[i].studentId) === String(card.id)) {
-      return { state:'hit', s:list[i] };
+    if (list[i].studentId && norm(list[i].studentId) === norm(card.id)) {
+      return { state:'hit', s:list[i], by:'id' };
+    }
+  }
+  for (var b = 0; b < list.length; b++){
+    if (list[b].studentId && bare(list[b].studentId) && bare(list[b].studentId) === bare(card.id)) {
+      return { state:'hit', s:list[b], by:'id' };
     }
   }
   for (var j = 0; j < list.length; j++){
     if (norm(list[j].name) === norm(card.name) && norm(list[j].cls) === norm(card.cls)) {
-      return { state:'hit', s:list[j] };
+      return { state:'hit', s:list[j], by:'name' };
     }
   }
   /* ── FOUND 20 AUGUST 2026, ON REAL DATA, AND IT WAS MINE ────────────────
@@ -4487,6 +4515,27 @@ function escHistoryHtml(x){
   }).join('') + '</div>';
 }
 
+/**
+ * HOW LONG SINCE THIS LADDER'S LAST OFFENCE — worked out from the date, never
+ * taken from the snapshot's own count.
+ *
+ * ADDED 21 August 2026. "Days since last offence" is computed when the
+ * snapshot is rebuilt and then sits there ageing: a snapshot built ten days
+ * ago reports 0 for a student whose last offence was ten days back, and this
+ * screen calls them still moving. The DATE in the next column does not age.
+ * Derived, never stored — the rule the rest of the tracker already runs on.
+ *
+ * The stored number stays as the fallback for a row whose date will not parse,
+ * because a wrong-ish number is better than no answer on a screen where "not
+ * recorded" and "clean" already look alike.
+ */
+function quietDays(x){
+  var d = dparse(x && x.last);
+  if (d) return Math.max(0, Math.round((midnight() - d) / 86400000));
+  var n = Number(x && x.quiet);
+  return isFinite(n) ? n : NaN;
+}
+
 function quietWords(n){
   if (!isFinite(n)) return 'not recorded';
   if (n <= 0) return 'today';
@@ -4498,32 +4547,36 @@ function dmHtml(){
   if (!S.snap) return soonHtml();
 
   var cards = dmCards();
-  var waiting = dmWaiting().length;
 
-  /* GETTING BETTER IS NOT A DISCHARGE, AND IT IS NOT A SEPARATE PLACE.
-     A full week with no new offence IN THE DOMAIN THAT BROUGHT THEM HERE —
-     never across the card. They keep their tier and everything they owe; this
-     is the difference between a student who is drifting and one who has
-     stopped, which is a thing to know BEFORE a conversation rather than after
-     one.
+  /* COUNTED IN STUDENTS, BECAUSE THE BADGE ABOVE IT IS. 21 August 2026, on
+     Kim's screen: "At the boundary 44" with "48 of them have nothing recorded
+     against them yet" underneath. This counted domain-ROWS, and a student at
+     the boundary on two ladders is one of the first and two of the second — so
+     the word "them" was doing something dishonest. Two numbers side by side
+     are read as being about the same thing whatever the label says. */
+  var waiting = cards.filter(function(c){
+    return c.lines.some(function(l){ return l.state.key === 'waiting'; });
+  }).length;
 
-     ── CORRECTED 20 AUGUST 2026, ON REAL DATA ──────────────────────────────
-     This was a TAB, and on the live sheet it swallowed the screen: forty-eight
-     students were at the boundary, every one of them had last offended more
-     than a week ago, and so the main list read "Nobody is at the DM boundary"
-     while a badge beside it said 48. Two counts of two different things, on
-     the same screen, disagreeing.
+  /* ── GETTING BETTER IS NOT A DISCHARGE, AND IT IS NOT A PLACE ────────────
+     It has now been three things. A TAB, which on live data swallowed the
+     screen: forty-eight at the boundary, every one of them quiet for a week,
+     so the main list read "Nobody is at the DM boundary" beside a badge saying
+     48. Then a SECTION at the foot, greyed back — which failed the same way for
+     the same reason on 21 August, because when everybody is on one side of a
+     split the other side prints its empty-state sentence over the whole page.
+     Kim, looking at forty-four names: "but that's all. no names."
 
-     It is now what the design said it should be: a section at the FOOT of the
-     same list, greyed back. Everyone at the boundary is on one page, in one
-     order, and the badge counts what the list shows. A tab that can empty the
-     screen is not a filter, it is a trapdoor. */
-  var better = cards.filter(function(c){
-    return c.lines.every(function(l){ return Number(l.x.quiet) >= 7; });
-  });
-  var live = cards.filter(function(c){
-    return c.lines.some(function(l){ return !(Number(l.x.quiet) >= 7); });
-  });
+     It is now a TAG ON THE CARD. The list is one list, in one order, and a
+     student's state travels with the student instead of with where they are
+     filed. This is the shape the hold tab has used since it was written, and
+     it cannot swallow anything: there is nowhere left for a student to be
+     filed away to.
+
+     A full week with no new offence IN THE DOMAIN THAT BROUGHT THEM HERE. They
+     keep their tier and everything they owe — this is the difference between a
+     student who is drifting and one who has stopped, which is worth knowing
+     before a conversation rather than after one. */
 
   var heldRows = allRows().filter(isHeld).sort(function(a, b){
     var da = dparse(a.heldOn), db = dparse(b.heldOn);
@@ -4537,16 +4590,16 @@ function dmHtml(){
     /* EVERYONE AT THE BOUNDARY, ON ONE PAGE. Those still moving first, then
        those who have been quiet a week, greyed back under their own heading —
        present, not hidden, and not counted as gone. */
-    body = dmListHtml(live, 'Nobody at the DM boundary has offended in the last week.') +
-      (better.length
-        ? '<div class="grouplabel" style="margin-top:26px">Getting better &mdash; ' +
-            better.length + ' with nothing new for a week</div>' +
-          '<div class="note">A week with no new offence <b>in the domain that brought them ' +
-            'here</b>. They keep their tier and everything they owe &mdash; this is the ' +
+    var better = cards.filter(function(c){ return !c.moving; }).length;
+    body =
+      (better
+        ? '<div class="note"><b>Getting better</b> marks a week with no new offence <b>in ' +
+            'the domain that brought them here</b> &mdash; ' + better + ' of these ' +
+            cards.length + '. They keep their tier and everything they owe. It is the ' +
             'difference between a student who is drifting and one who has stopped, which is ' +
-            'worth knowing before a conversation rather than after it.</div>' +
-          '<div style="opacity:.62">' + dmListHtml(better, '') + '</div>'
-        : '');
+            'worth knowing before a conversation rather than after it.</div>'
+        : '') +
+      dmListHtml(cards, 'Nobody is at the DM boundary.');
   }
 
   return '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
@@ -4585,7 +4638,8 @@ function dmHtml(){
         (heldRows.length ? ' <b>' + heldRows.length + '</b>' : '') + '</a>' +
     '</div>' +
     (waiting
-      ? '<div class="who">' + waiting + ' of them have nothing recorded against them yet.</div>'
+      ? '<div class="who">' + waiting + ' of these ' + cards.length + ' have a ladder with ' +
+        'nothing recorded against it yet.</div>'
       : '') +
     body +
     dmFaultsHtml() +
@@ -4602,13 +4656,22 @@ function dmListHtml(cards, emptyWords){
        what is wrong with them behind a click is the opposite of what the
        screen is for. cursor:default because .foldh promises a toggle there
        is not. */
-    return '<div class="fold open ' + sevClass(c.worst) + '" style="margin-bottom:14px">' +
+    /* THE STATE IS ON THE CARD, never only in a heading above it — see the
+       note in dmHtml. Quiet ones are dimmed rather than moved, so the shape of
+       the page still says which half is which without a student's presence
+       depending on it. */
+    return '<div class="fold open ' + sevClass(c.worst) + '" data-dmcard="' + esc(c.id) + '"' +
+      ' style="margin-bottom:14px' + (c.moving ? '' : ';opacity:.68') + '">' +
       '<div class="foldh" style="cursor:default"><div>' +
         '<div class="p">' + esc(c.name) + '</div>' +
         '<div class="meta">' + esc(c.cls) + ' &middot; ' + esc(c.cohort) +
           ' &middot; ' + c.lines.length + ' ladder' + (c.lines.length===1?'':'s') +
           ' at the boundary</div>' +
         groomLineHtml(c.groom) +
+      '</div>' +
+      '<div class="tierslot"><span class="tag ' + (c.moving ? 't4' : 'quiet') + '">' +
+        (c.moving ? 'Still moving' : 'Getting better') + '</span>' +
+        (c.moving ? '' : '<div class="s quiet">last ' + quietWords(c.quiet) + '</div>') +
       '</div></div>' +
       '<div class="foldb">' + c.lines.map(function(l){ return dmLineHtml(l, c.id); }).join('') +
       '</div></div>';
@@ -4630,7 +4693,8 @@ function dmHeldHtml(rows){
   return '<div class="rows">' + rows.map(function(x){
     var since = dparse(x.heldOn);
     var days = since ? Math.round((midnight() - since) / 86400000) : null;
-    var offendedSince = (days !== null && isFinite(x.quiet) && x.quiet < days);
+    var q = quietDays(x);
+    var offendedSince = (days !== null && isFinite(q) && q < days);
     return '<div class="row flat' + (offendedSince ? ' warnrow' : '') + '">' +
       '<div class="badge">' + (x.tier || '?') + '</div>' +
       '<div class="body"><div class="p">' + esc(x.name) + '</div>' +
@@ -4642,7 +4706,7 @@ function dmHeldHtml(rows){
       (x.heldWhy ? '<div class="s quiet">' + esc(x.heldWhy) + '</div>' : '') +
       (offendedSince
         ? '<div class="s"><b>Has offended since the hold was raised</b> &mdash; last ' +
-          quietWords(x.quiet) + '.</div>'
+          quietWords(q) + '.</div>'
         : '') +
       '</div>' +
       '<div class="tierslot"><span class="tag ' + (offendedSince ? 't4' : 'quiet') + '">' +
@@ -4679,12 +4743,55 @@ function dmFaultsHtml(){
      Log, so there is no roster to be missing from. Naming the limit once is
      honest; naming forty-two students is not. */
   if (S.groom && S.groom.connected) {
-    var shown = dmCards().filter(function(c){ return c.groom.state === 'hit'; }).length;
+    var hits   = dmCards().filter(function(c){ return c.groom.state === 'hit'; });
+    var shown  = hits.length;
+    var byId   = hits.filter(function(c){ return c.groom.by === 'id'; }).length;
+    var byName = hits.filter(function(c){ return c.groom.by === 'name'; }).length;
+
+    /* HOW, NOT JUST HOW MANY. Kim, 20 August 2026, having checked: the Grooming
+       Tracker's Log carries a Student ID on every row. Whether it is the SAME
+       id the Master Database uses is the entire question, and a plain count of
+       matches cannot answer it — the fragile name-and-class path produces
+       matches too, so a book keyed differently and a book keyed identically
+       give the same number. Counting the two paths apart is what makes the
+       difference visible. */
+    var how = byId || byName
+      ? ' &mdash; ' + byId + ' by Student ID' +
+        (byName ? ', ' + byName + ' by name and class' : '') + '.'
+      : '.';
+
     out.push('<b>Grooming is matched by Student ID</b> where the Grooming Tracker has one, ' +
       'and by name and class otherwise. ' + shown + ' of these students have something ' +
-      'recorded there. A student with nothing shown either has a clean record or is spelled ' +
-      'differently in that book &mdash; from here the two look identical, because that read ' +
-      'comes from its Log rather than from a roster.');
+      'recorded there' + how + ' A student with nothing shown either has a clean record or is ' +
+      'spelled differently in that book &mdash; from here the two look identical, because that ' +
+      'read comes from its Log rather than from a roster.');
+
+    if (byName) {
+      out.push(byName + ' of those were reached by <b>name and class alone</b>, so their ' +
+        'grooming record is one spelling change away from disappearing. Filling their Student ' +
+        'ID in on the Grooming Tracker&rsquo;s Log fixes it permanently.');
+    }
+
+    /* ── THE FAILURE THAT OTHERWISE SAYS NOTHING ────────────────────────────
+       If that book is keyed on a different id scheme, every comparison fails,
+       every name comparison probably fails with it, and this screen shows a
+       clean grooming record for the entire boundary. Nothing is reported,
+       because there is no roster to be missing from — the screen looks like
+       good news.
+
+       The giveaway is available and was not being used: the book HAS ids, and
+       not one of them matched. That combination has no innocent explanation. */
+    var withIds = (S.groom.students || []).filter(function(g){
+      return String(g.studentId || '').trim();
+    }).length;
+    if (withIds && !byId) {
+      out.push('<b>The Grooming Tracker has a Student ID on ' + withIds + ' of its students, ' +
+        'and not one of them matched anybody here.</b> That is not a coincidence &mdash; the ' +
+        'two books are keyed differently, and until that is sorted out every grooming record ' +
+        'on this screen is being reached by name and class, or not at all. Compare a Student ' +
+        'ID in the Grooming Tracker&rsquo;s Log against the same student in the Master ' +
+        'Database: they have to be written the same way.');
+    }
   }
 
   if (!out.length) return '';

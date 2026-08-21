@@ -93,35 +93,11 @@ h2{font-size:24px;margin-bottom:4px}
   transition:border-color .28s var(--curve)}
 .field textarea{font-size:16.5px;resize:vertical;line-height:1.5;border:1.5px solid var(--line);
   border-radius:9px;padding:11px 13px}
-/* THE PASSWORD REVEAL, as on the two phone pages. A committee password typed
-   on a laptop in a staffroom is mistyped as often as one typed on a phone, and
-   the second thing anybody does after a failed sign-in is type it wrong again.
-   The eye is a BUTTON, not a checkbox, and it is type="button" — inside a form
-   a bare <button> submits, which would have signed you in mid-peek. */
-/* THE RESET IS THE POINT OF THIS BLOCK, and it is why the eye had a box.
-   This page styles the bare <button> ELEMENT — background, padding, 9px
-   corners and a drop shadow — so every button gets a pill unless it opts out.
-   `.peek` set border and background but not box-shadow, border-radius,
-   padding or the hover transform, so the shadow and the corners survived and
-   the icon sat in a little raised box. The green slip and gate pages put that
-   styling on a .btn CLASS instead, which is why the identical markup looked
-   right there and wrong here. Everything the element rule sets is undone here
-   explicitly rather than by hoping specificity sorts it out. */
-.field.pw{position:relative}
-.field.pw input{padding-right:44px}
-.peek{position:absolute;right:0;bottom:5px;padding:7px 2px;
-  border:0;background:none;box-shadow:none;border-radius:0;
-  color:var(--muted);cursor:pointer;font:inherit;
-  transition:color .2s ease}
-.peek:hover{background:none;box-shadow:none;transform:none;color:var(--accent)}
-.peek:active{transform:none}
-.peek svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7;
-  stroke-linecap:round;stroke-linejoin:round;display:block}
-.peek .slash{opacity:0;transition:opacity .2s ease}
-.peek.showing .slash{opacity:1}
-.peek:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:5px}
+/* The password reveal button and the password field's styles came out on
+   21 August 2026 with the field itself — the Hub signs in with Google only. */
 
-/* Google's button, and a rule saying the password below it is the fallback. */
+/* Google's button. The `.gor` divider under it said "or use the committee
+   password" until 21 August 2026; there is nothing below it now. */
 .gwrap{margin-top:26px;max-width:430px}
 .centre .gwrap{margin-left:auto;margin-right:auto}
 .gor{display:flex;align-items:center;gap:14px;margin:22px 0 2px;
@@ -642,7 +618,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '21 August 2026 · DM Overview in one list · how grooming was matched · take a booking back';
+var HUB_BUILD = '21 August 2026 (b) · Google sign-in only, no committee password · DM Overview in one list';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -654,9 +630,11 @@ var HUB_BUILD = '21 August 2026 · DM Overview in one list · how grooming was m
    IT IS NOT A SECRET. A client ID is public by design; it is in this file, in
    a public repository, on purpose. What guards the Hub is the 👥 Access tab.
 
-   LEAVE IT BLANK AND NOTHING BREAKS. The sign-in screen falls back to the
-   committee password, which is how this ships and how it should stay until the
-   Cloud Console side is done and tested. */
+   LEAVING IT BLANK NOW BREAKS EVERYTHING, and that changed on 21 August 2026.
+   It used to be safe: the sign-in screen fell back to the committee password.
+   That password is gone, so this is the Hub's only door — blank means nobody
+   can sign in at all, and the screen says so in those words rather than
+   showing an empty box. */
 var GOOGLE_CLIENT_ID = '571181488230-dcjqp0psb0v4shndij1490ctg716erv4.apps.googleusercontent.com';
 
 /* The other tools in the project. One bookmark instead of four. */
@@ -896,7 +874,11 @@ function esc(s){ return String(s===null||s===undefined?'':s)
    hubSchedule and hubAttendance. A repeated booking is a student sitting a
    Wednesday they did not owe, and nobody would ever find it. */
 var RETRY_SAFE = {
-  hubLogin:3, hubGoogleLogin:3,
+  /* hubLogin came out on 21 August 2026 with the committee password. A name in
+     this table that the page never sends is an inventory of actions rather
+     than a retry policy, and this list was trimmed once already for exactly
+     that reason. */
+  hubGoogleLogin:3,
   hubAll:3, hubEarly:3, hubHistory:3, hubDetention:3,
   hubTeachers:3, hubGrooming:3, hubGroomingStudent:3
 };
@@ -1487,8 +1469,9 @@ function paintGoogle(){
        coming, and the password below is the answer. */
     if (paintGoogle.tries === undefined) paintGoogle.tries = 0;
     if (paintGoogle.tries++ < 12) setTimeout(paintGoogle, 400);
-    else host.innerHTML = '<div class="hintx">Google sign-in could not load. ' +
-                          'Use the committee password below.</div>';
+    else host.innerHTML = '<div class="hintx">Google sign-in could not load. Check the ' +
+                          'connection and reload the page &mdash; there is no password to ' +
+                          'fall back on.</div>';
     return;
   }
   paintGoogle.tries = 0;
@@ -1601,84 +1584,31 @@ function onGoogleCredential(resp){
              ' &mdash; what follows is the Hub\'s own server. ' +
              reachErr(e, 'complete the sign-in') +
              (onPhone
-               ? '<br><br><b>On a phone, this is a known fault and retrying will not help.</b> ' +
-                 'Use the committee password below &mdash; it works on this device. ' +
-                 'Google sign-in is reliable on a laptop.'
+               ? '<br><br><b>On a phone this has happened before, and retrying may not help.</b> ' +
+                 'Google sign-in is more reliable on a laptop &mdash; try there if this ' +
+                 'keeps failing. There is no password to fall back on: the committee ' +
+                 'password was removed on 21 August 2026.'
                : '');
     forgetGoogleChoice();
     render();
   });
 }
 
-function signIn(){
-  var pw = $('pw') ? $('pw').value : '';
-  var nm = $('nm') ? $('nm').value.trim() : '';
-  /* Keep the name across a failed attempt. Re-rendering the screen would
-     otherwise wipe it, and the second thing anybody does after mistyping a
-     password is mistype it again — with their name silently gone. */
-  S.name = nm;
-  if (!nm){ S.err='Type your name. It goes into the record of every follow-up you make.'; render(); return; }
-  if (!pw){ S.err='Type the password.'; render(); return; }
-  S.busy = true; S.err = ''; render();   // label change only — see signinHtml
+/* ── signIn() IS GONE, 21 AUGUST 2026 ─────────────────────────────────────
+   It read the password box, called `hubLogin`, and is the reason this page had
+   a password box at all. Both went together: the action is deleted server-side
+   and answers with a headstone, and there is no field left to read.
 
-  api('hubLogin', { password: pw }).then(function(res){
-    if (!res || !res.ok){ S.busy=false; S.err=(res&&res.error)||'Could not sign in.'; render(); return; }
-    TOKEN = res.token; S.user = nm; rememberSession(TOKEN, nm, '');
-    return loadAll().then(function(){
-      S.busy = false; S.view = 'menu'; render(true);
-    });
-  }).catch(function(e){
-    S.busy = false;
-    /* THIS CATCH ALSO SWALLOWS loadAll()'s THROW. loadAll deliberately throws
-       when the snapshot comes back ok:false — a server that answered clearly
-       and said no. Reporting that as an unreachable server is the same lie
-       this whole block exists to stop telling, so a plain Error with a message
-       is shown as itself. */
-    if (e && !e.badReply && e.message && e.message !== 'Failed to fetch'){
-      S.err = esc(e.message);
-    } else {
-      S.err = reachErr(e, 'sign in') +
-        (e && e.badReply ? '' :
-          ' Three things cause this: the deployment at that address no longer exists ' +
-          '(check Deploy → Manage deployments — a NEW deployment issues a different ' +
-          '/exec and leaves this one stranded); the page is being opened straight from ' +
-          'your disk rather than from its web address; or the connection is down.');
-    }
-    render();
-  });
-}
+   THE NAME FIELD WENT WITH IT. It existed only for the password path — a
+   Google sign-in takes the name from 👥 Access, which is the whole reason that
+   tab exists — and a field you must skip past to reach the thing you actually
+   wanted is a field in the way.
 
-/* ── WHY SIGNING IN USED TO TAKE SO LONG, AND WHAT WAS DONE ────────────────
-   Four reads ran ONE AFTER ANOTHER and the menu waited for the last of them.
-   Each is a separate round trip to Apps Script, each takes a second or three
-   on its own, and two of the four are heavy: hubEarly walks the whole 📋 Log
-   and hubGrooming opens a SECOND SPREADSHEET. Adding those two on 3 August
-   roughly doubled a wait that was already too long — the cost was invisible
-   in the code, because a chain of .then() looks the same whether the calls
-   are quick or slow.
-
-   THEN 4 AUGUST CHANGED THE ANSWER AGAIN, and this paragraph is the second
-   version of it. Firing three reads at once was the right shape while the
-   constraint was thought to be TIME. It was not: concurrent requests to this
-   deployment break each other's redirect ticket, so three simultaneous reads
-   were three chances to lose one. The fix went the other way — snapshot,
-   detention and early dismissal are now ONE request, `hubAll`, which the
-   server assembles and returns whole. Grooming, the slowest because it opens
-   a second spreadsheet, is not fetched at sign-in at all; it waits until you
-   open the area. A sign-in is two requests rather than five.
-
-   WHAT SURVIVED FROM THE FIRST VERSION: each part of hubAll's reply is still
-   judged on its own, so a broken detention tab costs you that row and not the
-   menu. And a row that has not arrived still says "reading", never "could not
-   be read" — those are opposite facts and null cannot tell them apart, which
-   is what S.pending is for. It now tracks only the two reads that can still
-   be outstanding after sign-in: early dismissals when you refresh that area,
-   and grooming until you first open it. */
-/* ── EVERYTHING AGAIN, ON DEMAND ─────────────────────────────────────────
-   The Hub reads once at sign-in and then works from what it has, which is
-   right — but the spreadsheet is edited by other people and by a timed trigger,
-   so "what it has" quietly ages. Until now the only cure was signing out and
-   in, which is a strange thing to have to do to see a number change. */
+   WHAT REPLACES IT for a lost phone or somebody leaving the committee: 🎓
+   Discipline Tools → 🔐 Passwords and keys → 🚪 Sign everybody out of the Hub,
+   which rotates the session secret and ends every session at once. That used
+   to be a side effect of changing the password, and would have been lost by
+   accident with it. */
 function refreshAll(){
   if (S.busy) return;
   S.busy = true; S.err = ''; render();
@@ -2054,29 +1984,19 @@ function signinHtml(){
              the whole thing here printed "&mdash;" and "<b>" on screen as
              literal text, which Kim rightly read as the page being broken. */
           (S.gerr ? '<div class="note err">' + S.gerr + '</div>' : '') +
-          '<div class="gor"><span>or use the committee password</span></div>' +
-        '</div>'
-      : '') +
-    /* THE NAME AND PASSWORD NOW SIT BELOW GOOGLE, in that order, because that
-       is the order somebody uses them in. The name field between the heading
-       and the Google button implied it was needed for both; it is needed only
-       for the password path, and a field you must skip past to reach the thing
-       you actually wanted is a field in the way. */
-    '<div class="field"><label>Your name</label>' +
-      '<input id="nm" autocomplete="name" value="' + esc(S.name || S.user) + '">' +
-      (GOOGLE_CLIENT_ID ? '<div class="hintx">Only for the password sign-in below &mdash; ' +
-        'a Google sign-in takes your name from the access list.</div>' : '') + '</div>' +
-    '<div class="field pw"><label>Committee password</label>' +
-      '<input type="password" id="pw" autocomplete="current-password" autocapitalize="off" spellcheck="false">' +
-      '<button type="button" class="peek" id="peek" aria-label="Show the password" title="Show the password">' +
-        '<svg viewBox="0 0 24 24">' +
-          '<path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z"/>' +
-          '<circle cx="12" cy="12" r="3.2"/>' +
-          '<path class="slash" d="M3.5 3.5l17 17"/>' +
-        '</svg>' +
-      '</button></div>' +
-    '<div class="stack"><button id="go"' + (S.busy?' disabled':'') + '>' +
-      (S.busy ? 'Logging in&hellip;' : 'Login') + '</button></div>' +
+        '</div>' +
+        '<div class="s quiet" style="margin-top:18px">Sign in with your school Google ' +
+          'account. Your name comes from the access list, so there is nothing to type.</div>'
+      /* ── NOTHING TO FALL BACK TO, AND THAT IS THE POINT ─────────────────
+         A sign-in screen with no way to sign in and no explanation reads as
+         broken rather than as unconfigured — and with the password gone there
+         is no second path to quietly absorb it. So it says what is missing, in
+         words, to whoever is standing in front of it. The health check says
+         the same thing to whoever opens the spreadsheet. */
+      : '<div class="note warn"><b>This Hub has not been set up yet.</b> No Google client ' +
+          'ID has been set, and the committee password was removed on 21 August 2026 &mdash; ' +
+          'so there is no way to sign in at all. In the Master Tracker: 🎓 Discipline Tools ' +
+          '&rarr; 🔐 Passwords and keys &rarr; 🔐 The Google client ID.</div>') +
     (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') +
   '</div></div>';
 }
@@ -2218,11 +2138,12 @@ function menuHtml(){
     /* THE EMAIL, NOT JUST THE NAME. On a machine signed into more than one
        Google account the question that actually matters is WHICH account is
        driving this screen — and a first name cannot answer it. Where there is
-       no email, the password path was used, and saying so is honest: the
-       system knows somebody knew the password and nothing more. */
+       no email, this is a session that predates 21 August 2026 — minted on the
+       password path, which no longer exists. Saying so is honest, and it is
+       also the cue to sign out and back in. */
     '<div class="who">Signed in as ' + esc(S.user) +
       (S.email ? ' &middot; <b>' + esc(S.email) + '</b>' :
-                 ' &middot; <i>committee password</i>') + '</div>' +
+                 ' &middot; <i>an older session &mdash; sign out and in again</i>') + '</div>' +
     '<div class="mrows">' + rows + '</div>' + tools + build +
     /* NO INTERVAL IN THIS SENTENCE, DELIBERATELY. It said "rebuilds hourly"
        until 4 August 2026, when the trigger had run every ten minutes for as
@@ -5903,27 +5824,12 @@ function openOutlook(){
 function wire(){
   var v = $('view');
 
-  if ($('go')) $('go').addEventListener('click', signIn);
-  if ($('pw')) $('pw').addEventListener('keydown', function(e){ if (e.key==='Enter') signIn(); });
-  /* THE STATE LIVES ON THE ELEMENTS, NOT IN S. A reveal that survived a
-     re-render would mean a password left visible on a staffroom screen after
-     a failed attempt redrew the page — so it deliberately resets to hidden
-     every time this screen is drawn. */
-  /* Draw Google's button whenever the sign-in screen exists. It has to happen
-     in wire() rather than once at startup, because render() replaces the div
-     it draws into every time the screen is redrawn. */
+  /* THE PASSWORD WIRING IS GONE — 21 August 2026, with the field, the reveal
+     button, the name box and signIn() itself. Only Google's button is left to
+     draw, and it has to be drawn here rather than once at startup because
+     render() replaces the div it draws into every time this screen is
+     redrawn. */
   if ($('gbtn')) paintGoogle();
-
-  if ($('peek')) $('peek').addEventListener('click', function(){
-    var f = $('pw'); if (!f) return;
-    var showing = f.type === 'text';
-    f.type = showing ? 'password' : 'text';
-    this.classList.toggle('showing', !showing);
-    this.setAttribute('aria-label', showing ? 'Show the password' : 'Hide the password');
-    this.setAttribute('title', showing ? 'Show the password' : 'Hide the password');
-    f.focus();
-  });
-  if ($('nm')) { if (S.name) { if ($('pw')) $('pw').focus(); } else $('nm').focus(); }
   if ($('out')) $('out').addEventListener('click', signOut);
 
   if ($('mail')) $('mail').addEventListener('click', function(){

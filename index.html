@@ -618,7 +618,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '21 August 2026 (c) · take a follow-up or an overturn back · Google sign-in only';
+var HUB_BUILD = '21 August 2026 (d) · grooming counts a student once · take a follow-up or an overturn back';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -2729,6 +2729,17 @@ function groomStudentHtml(){
       'the Student ID on those rows does not match the one in the Master Database. The record ' +
       'is right, but it is one spelling change away from disappearing. Correcting the ID on ' +
       'the Grooming Tracker&rsquo;s Log fixes it for good.</div>'
+    : d.matchedBy === 'id+name'
+    /* SOME of these rows have no Student ID on them at all — recorded through the
+       grooming app's "record anyway", which is for a student the Master does not
+       have yet. They are counted here, and they were not before, which is the
+       difference between this page agreeing with the list and quietly
+       disagreeing with it. But the sheet still needs fixing, and nothing else
+       will say so. */
+    ? '<div class="note">Some of these rows have <b>no Student ID</b> on them &mdash; they were ' +
+      'recorded before this student was in the Master Database. They are counted here and on ' +
+      'the overview, but putting the ID on them in the Grooming Tracker&rsquo;s Log is what ' +
+      'makes that permanent.</div>'
     : '';
 
   return byName + '<div class="gsec"><div class="gfig">' +
@@ -3477,6 +3488,13 @@ function groomStudentsHtml(d){
     var meta = [x.cls || 'class unknown'];
     if (x.lastDate) meta.push('last picked up ' + x.lastDate);
     if (x.noShow) meta.push(x.noShow + ' did-not-report');
+    /* Counted, but the sheet still wants fixing. `ambiguous` is the other case
+       and the opposite problem: two students share this name and class, so
+       these rows could NOT be given to either of them and are not counted on
+       anybody. That one needs a person to look. */
+    /* A literal em dash, not &mdash; — these go through esc() below. */
+    if (x.ambiguous) meta.push('cannot tell which student — needs checking');
+    else if (x.unlinked) meta.push(x.unlinked + ' with no Student ID yet');
     var why = (x.byCat||[]).map(function(c){ return c.n + ' ' + c.name.toLowerCase(); }).join(' &middot; ');
     return '<div class="row flat' + (x.overTerm ? ' t3' : '') + '">' +
         '<div class="body">' +

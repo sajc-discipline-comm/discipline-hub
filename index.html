@@ -618,7 +618,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '21 August 2026 (b) · Google sign-in only, no committee password · DM Overview in one list';
+var HUB_BUILD = '21 August 2026 (c) · take a follow-up or an overturn back · Google sign-in only';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -747,7 +747,8 @@ var S = {
   hLoading:false, hErr:'',
   ask:null,             // { kind:'overturn'|'hold'|'unhold', entryId, reason }
   tLoading:false, tErr:'', diag:false,
-  local:{},             // entryId -> 'Overturned', until the next rebuild
+  local:{},             // entryId -> 'Overturned' | 'Counted', until the next rebuild
+  unstamped:{},         // entryId -> true, likewise, after a follow-up is taken back
   holdLocal:{},         // studentId|domain -> 'Held' | 'Open', likewise
   sel:{},               // entryId -> true
   stamped:{},           // entryId -> {by, when} — optimistic, until the next rebuild
@@ -1826,7 +1827,7 @@ function signOut(){
           google.accounts.id.disableAutoSelect(); } catch(e){}
   S.gstu=null; S.gLoading=false; S.groomTried=false;
   S.err=''; S.first=true; S.result=null; S.name='';
-  S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={};
+  S.student=null; S.history=null; S.ask=null; S.local={}; S.holdLocal={}; S.unstamped={};
   S.lastBook=null; S.armUnbook='';
   S.esc=null; S.escTried=false; S.escDraft={}; S.escOpen=''; S.dmTab='now';
   render(true);
@@ -2460,6 +2461,15 @@ function statusLabel(code){
 }
 
 function stateOf(r){ return S.local[r.entryId] || String(r.state || ''); }
+
+/* WAS THIS ONE FOLLOWED UP — allowing for a stamp taken back on this screen.
+   Same shape as stateOf: the snapshot will not know until it next rebuilds, so
+   the page carries its own answer until then. Read through this rather than
+   touching r.followedUp directly, or the row keeps its tick after the reversal
+   and the person who just clicked has no idea whether it worked. */
+function stampedNow(r){
+  return S.unstamped[r.entryId] ? '' : String(r.followedUp || '');
+}
 /* isLive(r) lived here until 4 August 2026. Nothing called it — every caller
    inlined /counted/i.test(stateOf(r)) instead — so it was a second definition
    of the same rule, sitting where somebody would reasonably expect to find the
@@ -2773,18 +2783,20 @@ function rowLineHtml(r){
   var bad  = !/^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/.test(String(r.date||''));
   var counts = statusCounts(r.status);
 
+  var stamp = stampedNow(r);
+
   var tags = '';
   if (Number(r.counts) === 2) tags += '<span class="tag t4">counts twice</span> ';
   if (!live) tags += '<span class="tag quiet">' + esc(st || 'not counted') + '</span> ';
-  if (r.followedUp) tags += '<span class="tag ok">followed up</span> ';
+  if (stamp) tags += '<span class="tag ok">followed up</span> ';
   if (bad) tags += '<span class="tag t5">date unreadable</span> ';
 
   var why = '';
   if (!live && (r.stateChangedBy || r.stateReason)){
     why = '<div class="tlwhy">' + esc(r.stateChangedBy || '') +
           (r.stateReason ? ' &mdash; ' + esc(r.stateReason) : '') + '</div>';
-  } else if (r.followedUp){
-    why = '<div class="tlwhy">' + esc(r.followedUp) +
+  } else if (stamp){
+    why = '<div class="tlwhy">' + esc(stamp) +
           (r.followedUpBy ? ' by ' + esc(r.followedUpBy) : '') +
           (r.actionTaken ? ' &mdash; ' + esc(r.actionTaken) : '') + '</div>';
   }
@@ -2812,9 +2824,26 @@ function rowLineHtml(r){
       tags +
       (rem ? '<div class="rem">' + esc(rem) + '</div>' : '') +
       why + '</div>' +
-    '<div class="tla">' + (live && counts
-      ? '<button class="plain" data-excuse="' + esc(r.entryId) + '">Excuse this one</button>'
-      : '') + '</div></div>';
+    /* THREE THINGS THIS ROW CAN OFFER, and never more than the ones that make
+       sense for the state it is actually in.
+
+       PUTTING SOMETHING BACK IS AS IMPORTANT AS SETTING IT ASIDE. Until 21
+       August 2026 neither reversal existed, and a misclick could only be
+       repaired by deleting the offence outright — destroying the record of a
+       real late to fix a slip of the finger. A wrongly stamped student is the
+       worse case of the two: they read as followed up when nobody spoke to
+       them, drop off the worklist, and are never chased. */
+    '<div class="tla">' +
+      (live && counts
+        ? '<button class="plain" data-excuse="' + esc(r.entryId) + '">Excuse this one</button>'
+        : '') +
+      (/overturned/i.test(st)
+        ? '<button class="plain" data-unexcuse="' + esc(r.entryId) + '">Put it back</button>'
+        : '') +
+      (stamp
+        ? '<button class="plain" data-unstamp="' + esc(r.entryId) + '">Undo follow-up</button>'
+        : '') +
+    '</div></div>';
 }
 
 /* The ladder, with this student's tier bracketed. */
@@ -2858,6 +2887,43 @@ function askHtml(){
         '<textarea id="reason" rows="2" placeholder="e.g. Bus breakdown along Upper Serangoon, confirmed by the CT."></textarea></div>' +
       '<div class="stack rowwise"><button id="doask"' + (S.busy?' disabled':'') + '>' +
         (S.busy?'Recording&hellip;':'Excuse it') + '</button>' +
+        '<button class="plain" id="cancelask">Cancel</button></div>' +
+      (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') + '</div>';
+  }
+  if (a.kind === 'unexcuse'){
+    /* THE REVERSAL IS ITS OWN DECISION, not an undo button, so it asks for a
+       reason exactly as excusing did. The count coming back is stated plainly
+       because that is the part somebody will want to be sure of. */
+    return '<div class="note q"><b>Put this offence back?</b> ' +
+      'The state returns to <b>Counted</b> and it starts counting again at the next rebuild &mdash; ' +
+      'at its original weight, so a double late comes back as two. ' +
+      'The reason given when it was excused is cleared, and this reversal is recorded in ' +
+      '📝 Record of Changes with your name against it. ' +
+      '<b>The offence itself was never edited</b> &mdash; excusing only ever changed its state.' +
+      '<div class="field"><label>Why &mdash; required</label>' +
+        '<textarea id="reason" rows="2" placeholder="e.g. Excused the wrong row — this was the 14th, not the 15th."></textarea></div>' +
+      '<div class="stack rowwise"><button id="doask"' + (S.busy?' disabled':'') + '>' +
+        (S.busy?'Recording&hellip;':'Put it back') + '</button>' +
+        '<button class="plain" id="cancelask">Cancel</button></div>' +
+      (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') + '</div>';
+  }
+  if (a.kind === 'unstamp'){
+    /* ⚠️ THE ONE WORTH BEING BLUNT ABOUT. A stamp that should not be there is
+       worse than a missing one: the student reads as dealt with, leaves the
+       worklist, and nobody chases them. Saying so here is the difference
+       between somebody using this and somebody wondering whether they dare. */
+    return '<div class="note q"><b>Undo the follow-up on this offence?</b> ' +
+      'The date, your colleague’s name and what was done are cleared, and the student ' +
+      '<b>returns to the worklist</b> at the next rebuild. ' +
+      'The offence itself is untouched &mdash; nothing about what happened changes. ' +
+      'The reversal is recorded in 📝 Record of Changes with your name and reason.' +
+      '<div class="note warn">If an email has already gone out, undoing this does not unsend it. ' +
+      'It says the follow-up still needs doing &mdash; which is the right record if it went to the ' +
+      'wrong person.</div>' +
+      '<div class="field"><label>Why &mdash; required</label>' +
+        '<textarea id="reason" rows="2" placeholder="e.g. Stamped the wrong student — two names alike on the list."></textarea></div>' +
+      '<div class="stack rowwise"><button id="doask"' + (S.busy?' disabled':'') + '>' +
+        (S.busy?'Recording&hellip;':'Undo the follow-up') + '</button>' +
         '<button class="plain" id="cancelask">Cancel</button></div>' +
       (S.err ? '<div class="note err" id="err">' + esc(S.err) + '</div>' : '') + '</div>';
   }
@@ -5721,6 +5787,11 @@ function doAsk(){
 
   var call, body = { token: TOKEN, by: S.user };
   if (a.kind === 'overturn'){ call='hubOverturn'; body.entryId = a.entryId; body.reason = r; }
+  else if (a.kind === 'unexcuse'){ call='hubUnoverturn'; body.entryId = a.entryId; body.reason = r; }
+  /* A BATCH ON THE SERVER, one row here. hubUnstamp takes a list because
+     stamping is a list — one email covers a day's students — but this screen
+     only ever reverses the row somebody is looking at. */
+  else if (a.kind === 'unstamp'){ call='hubUnstamp'; body.entryIds = [a.entryId]; body.reason = r; }
   else { call = (a.kind==='hold') ? 'hubHold' : 'hubUnhold';
          body.studentId = S.student.id; body.domain = S.student.domain;
          if (r) body.reason = r; }
@@ -5729,6 +5800,8 @@ function doAsk(){
     S.busy = false;
     if (!res || !res.ok){ S.err = (res && res.error) || 'Nothing was recorded.'; render(); return; }
     if (a.kind === 'overturn') S.local[a.entryId] = 'Overturned';
+    else if (a.kind === 'unexcuse') S.local[a.entryId] = 'Counted';
+    else if (a.kind === 'unstamp') S.unstamped[a.entryId] = true;
     else S.holdLocal[S.student.id + '|' + S.student.domain] = (a.kind==='hold') ? 'Held' : 'Open';
     S.ask = null; render();
   }).catch(function(){
@@ -5935,6 +6008,14 @@ function wire(){
 
     var exc = t.closest && t.closest('[data-excuse]');
     if (exc){ S.ask = { kind:'overturn', entryId: exc.getAttribute('data-excuse') }; S.err=''; render(); return; }
+
+    /* THE TWO REVERSALS, added 21 August 2026 alongside hubUnoverturn and
+       hubUnstamp. Both open the same ask dialog as the thing they undo,
+       because reversing a decision is itself a decision and needs a reason. */
+    var unx = t.closest && t.closest('[data-unexcuse]');
+    if (unx){ S.ask = { kind:'unexcuse', entryId: unx.getAttribute('data-unexcuse') }; S.err=''; render(); return; }
+    var uns = t.closest && t.closest('[data-unstamp]');
+    if (uns){ S.ask = { kind:'unstamp', entryId: uns.getAttribute('data-unstamp') }; S.err=''; render(); return; }
 
     var pick = t.closest && t.closest('[data-pick]');
     if (pick){

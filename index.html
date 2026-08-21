@@ -618,7 +618,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '21 August 2026 (d) · grooming counts a student once · take a follow-up or an overturn back';
+var HUB_BUILD = '21 August 2026 (e) · says who has no email address · grooming counts a student once';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -5471,8 +5471,8 @@ function introFor(g){
 }
 
 function recipients(){
-  var out = [], seen = {}, absent = [], noIds = [], unresolved = [], noClass = [];
-  if (!S.teachers) return { list:[], absent:[], noIds:[], unresolved:[], noClass:[], ready:false };
+  var out = [], seen = {}, absent = [], noIds = [], unresolved = [], noClass = [], noEmail = [];
+  if (!S.teachers) return { list:[], absent:[], noIds:[], unresolved:[], noClass:[], noEmail:[], ready:false };
   picked().forEach(function(x){
     var k = String(x.cls||'').trim().toUpperCase();      // C returns UPPERCASE keys
     /* A student with no class is not a class with no teachers. Reporting it as
@@ -5492,13 +5492,25 @@ function recipients(){
       else if (noIds.indexOf(k)<0) noIds.push(k);                              // the class is there, the IDs are not
       return;
     }
+    /* AN ACTIVE FORM TEACHER WITH NO ADDRESS IS DROPPED HERE, and dropping her
+       is right — pasting a blank into Outlook helps nobody. What was wrong was
+       doing it in silence. She is in none of the three buckets above, because
+       nothing about her is a fault: she is a form teacher of this class and the
+       Master says so. She just never hears about her own student.
+       Named now, so somebody can go and fill the cell in. */
+    var nm = S.teachers.noEmailByClass && S.teachers.noEmailByClass[k];
+    if (nm && nm.length) nm.forEach(function(p){
+      var w = (p.honorific ? p.honorific + ' ' : '') + (p.name || p.teacherId) + ' (' + k + ')';
+      if (noEmail.indexOf(w) < 0) noEmail.push(w);
+    });
     t.forEach(function(p){
       var e = String(p.email||'').trim().toLowerCase();
       if (!e || seen[e]) return;
       seen[e] = 1; out.push(p);
     });
   });
-  return { list:out, absent:absent, noIds:noIds, unresolved:unresolved, noClass:noClass, ready:true };
+  return { list:out, absent:absent, noIds:noIds, unresolved:unresolved, noClass:noClass,
+           noEmail:noEmail, ready:true };
 }
 
 /* WHAT THE MASTER ACTUALLY SENT BACK, on demand. "No teachers listed for
@@ -5698,6 +5710,16 @@ function emailHtml(){
       warn += '<div class="note err"><b>' + esc(r.unresolved.join(', ')) +
               ' has teachers assigned who are not Active in the Master.</b> ' +
               'That is a data error somebody should fix &mdash; it is not a class without form teachers.</div>';
+    /* The quietest one, and the reason it is worded as a person rather than a
+       class: the fix is one cell, and it is her cell. */
+    if (r.noEmail.length)
+      warn += '<div class="note warn"><b>' + esc(r.noEmail.join(', ')) +
+              (r.noEmail.length===1 ? ' has' : ' have') + ' no email address in the Master.</b> ' +
+              (r.noEmail.length===1 ? 'She is' : 'They are') + ' a form teacher of ' +
+              (r.noEmail.length===1 ? 'that class' : 'those classes') + ' and ' +
+              (r.noEmail.length===1 ? 'is' : 'are') + ' <u>not on the list below</u> &mdash; ' +
+              'there is no address to put there. Filling in the Email cell on the ' +
+              'Master&rsquo;s Teachers tab is the whole fix.</div>';
   }
 
   var addr = r.list.map(function(p){ return p.email; }).join('; ');
@@ -6162,6 +6184,10 @@ function loadTeachers(){
     S.tLoading = false;
     if (res && res.ok){
       S.teachers = { byClass: res.byClass || {}, unresolvedByClass: res.unresolvedByClass || {},
+                     /* Absent on an older deployment, in which case the screen
+                        says nothing about addresses — which is where it was
+                        before, not a new fault. || {} keeps the lookup safe. */
+                     noEmailByClass: res.noEmailByClass || {},
                      /* Round 4. Absent on an older deployment — everything below
                         degrades to the counts the Hub can work out for itself. */
                      counts: res.counts || null, source: res.source || null,

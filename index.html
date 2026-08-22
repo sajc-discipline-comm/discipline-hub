@@ -730,7 +730,7 @@ var S = {
 
   /* Which background reads are still in flight. A row that has not arrived says
      "reading", not "could not be read" — null cannot tell those apart. */
-  pending:{ early:false, groom:false, policy:false },
+  pending:{ early:false, groom:false, policy:false, phealth:false },
 
   /* hubPolicy's reply — the six hand-edited tabs, read-only. Same null rule as
      early and groom: NULL MEANS "NOT READ", never "no policy". It is fetched
@@ -738,6 +738,14 @@ var S = {
      it runs the health check and that reads the whole Log. */
   policy:null,
   ptab:'ladders',       // which of the six policy tabs is showing
+
+  /* THE HEALTH CHECK'S FINDINGS, FETCHED SEPARATELY AND DELIBERATELY SECOND.
+     Split out on 23 August 2026, the day Policy shipped, because it made the
+     screen slow: the six policy tabs are tiny, and healthFindings_ walks the
+     whole Log and opens the Master. Same three states as S.groom — null is
+     "not read", and the screen must never draw a missing verdict as a clean
+     one. `pherr` carries the reason when the check itself failed. */
+  phealth:null, pherr:'',
 
   /* The open student's grooming record, and whether it is still coming. It
      lives in a different spreadsheet and is fetched only when a student page
@@ -896,7 +904,7 @@ var RETRY_SAFE = {
      is the whole test this table applies — a lost reply is a lost read and
      nothing else. Contrast hubRebuild, which is deliberately absent: a retried
      rebuild is a second rebuild. */
-  hubPolicy:3
+  hubPolicy:3, hubPolicyHealth:3
 };
 
 function apiOnce(action, payload){
@@ -1799,9 +1807,40 @@ function loadPolicy(){
   }).catch(function(){ S.policy = null; });
 }
 
+/* ⚠️ THE SLOW HALF, ON ITS OWN REQUEST AND NOT WAITED FOR. Kim, 23 August
+   2026, opening the screen on the live sheet: "policy tabs take a lonnnnng
+   time to load...but it loads." The tabs are tiny; the health check walks the
+   whole Log and opens the Master. So the rules draw at once and the verdict
+   fills in behind them — the same split as hubGrooming and hubGroomingStudent,
+   for the same reason. */
+function loadPolicyHealth(){
+  return api('hubPolicyHealth', { token: TOKEN }).then(function(res){
+    if (res && res.ok){ S.phealth = res; S.pherr = ''; }
+    /* NULL STAYS NULL ON FAILURE. A check that could not run and a school with
+       nothing wrong look identical on screen and mean opposite things. */
+    else { S.phealth = null; S.pherr = (res && res.error) || ''; }
+  }).catch(function(){
+    S.phealth = null;
+    S.pherr = 'The check did not come back.';
+  });
+}
+
 function ensurePolicy(){
   if (S.policy || S.pending.policy) return Promise.resolve();
   S.pending.policy = true; S.perr = '';
+
+  /* THE TWO GO OUT TOGETHER AND LAND SEPARATELY. Firing the health check only
+     after the tabs arrive would make the slow half start late as well as take
+     long; firing it in the same request is what made the screen slow in the
+     first place. Two requests, and the screen draws on whichever is back. */
+  if (!S.phealth && !S.pending.phealth){
+    S.pending.phealth = true;
+    loadPolicyHealth().then(function(){
+      S.pending.phealth = false;
+      if (TOKEN && S.view === 'policy') render();
+    });
+  }
+
   return loadPolicy().then(function(){
     S.pending.policy = false;
     if (TOKEN && S.view !== 'signin') render();
@@ -1850,10 +1889,21 @@ function policyHtml(){
      screen anybody has to act on, and the health check has always been a menu
      item somebody had to remember to run. A rung that contradicts another rung
      is invisible until something fires wrongly. */
-  var probs = d.health && d.health.problems || [];
-  var notes = d.health && d.health.notes || [];
+  var probs = S.phealth && S.phealth.problems || [];
+  var notes = S.phealth && S.phealth.notes || [];
 
-  if (probs.length){
+  /* ⚠️ THREE STATES, NOT TWO, and the third is the one that matters. "Still
+     checking" must never be drawn as "nothing wrong" — the findings arrive on
+     their own request and the tabs almost always beat them. */
+  if (S.pending.phealth || (!S.phealth && !S.pherr)){
+    h += '<div class="grouplabel">Checking the rules</div>' +
+      '<div class="blank">Reading the Log and the Master Database&hellip; ' +
+      'the rules below are already what the tracker reads.</div>';
+  } else if (!S.phealth){
+    h += '<div class="grouplabel">The check could not run</div>' +
+      '<div class="blank">' + esc(S.pherr || 'The check did not come back.') +
+      '</div>';
+  } else if (probs.length){
     h += '<div class="grouplabel">' + probs.length + ' problem' +
          (probs.length===1?'':'s') + ' to fix</div><div class="rows">' +
       probs.map(function(p){
@@ -1863,12 +1913,12 @@ function policyHtml(){
   } else {
     h += '<div class="grouplabel">Nothing wrong with the rules</div>' +
       '<div class="blank">The health check found no problems. It read ' +
-      esc(String(d.health.counts.log)) + ' log row' +
-      (d.health.counts.log===1?'':'s') + ', ' +
-      esc(String(d.health.counts.tiers)) + ' ladder tier' +
-      (d.health.counts.tiers===1?'':'s') + ' and ' +
-      esc(String(d.health.counts.terms)) + ' term row' +
-      (d.health.counts.terms===1?'':'s') + '.</div>';
+      esc(String(S.phealth.counts.log)) + ' log row' +
+      (S.phealth.counts.log===1?'':'s') + ', ' +
+      esc(String(S.phealth.counts.tiers)) + ' ladder tier' +
+      (S.phealth.counts.tiers===1?'':'s') + ' and ' +
+      esc(String(S.phealth.counts.terms)) + ' term row' +
+      (S.phealth.counts.terms===1?'':'s') + '.</div>';
   }
 
   /* WHICH TABS COULD NOT BE READ AT ALL — its own block, not folded in with
@@ -2270,9 +2320,25 @@ function render(moved){
    called it. */
 
 function signinHtml(){
-  /* THE SIGN-IN SCREEN ANIMATES ONCE. Going busy is a change of button label,
-     not a change of screen — replaying the entrance every time the state
-     moved made a slow sign-in look like a page reloading itself. */
+  /* THE SIGN-IN SCREEN ANIMATES ONCE. Going busy is a change WITHIN the screen,
+     not a change of screen — replaying the entrance every time the state moved
+     made a slow sign-in look like a page reloading itself.
+
+     ⚠️ THIS DOCBLOCK SAID "a change of button label" UNTIL 23 AUGUST 2026, AND
+     THE BUTTON IT MEANT NO LONGER EXISTED. It was the password submit button,
+     removed on 21 August with the committee password — and the busy state went
+     with it, silently. onGoogleCredential still set S.busy and re-rendered
+     faithfully; nothing on this screen read it.
+
+     Kim, 23 August 2026: "there was the google sign in and i clicked on it, but
+     no indication if it was successful or not, then it just let me in. last
+     time there was a button saying signing in."
+
+     ⚠️ THE GAP IS TWO ROUND TRIPS, NOT ONE. hubGoogleLogin, then loadAll() —
+     each ~2.5 seconds against a deployment that drops replies under load. A
+     page that takes that long and shows nothing is a page somebody clicks
+     again, which is the double-submit shape this project has already been
+     bitten by at the green slip counter. */
   return '<div class="screen centre' + (S.first ? '' : ' still') + '"><div class="wrap">' +
     '<div class="date">' + esc(todayLong()) + '</div>' +
     '<h1 class="big">SAJC Discipline Committee Hub</h1>' +
@@ -2292,7 +2358,19 @@ function signinHtml(){
        staff are trained to distrust it. */
     (GOOGLE_CLIENT_ID
       ? '<div class="gwrap">' +
-          '<div id="gbtn"></div>' +
+          /* ⚠️ THE BUSY STATE REPLACES THE BUTTON, it does not sit beside it.
+             Two reasons, and the second is the one that matters. It is the
+             clearest possible feedback — the thing you clicked visibly becomes
+             the thing that is happening. And it makes a second click
+             impossible during the window when a second click does damage:
+             Google would mint a fresh credential and this page would run a
+             second hubGoogleLogin against a deployment already busy losing the
+             reply to the first. */
+          (S.busy
+            ? '<div class="note">Signing you in&hellip;<div class="s quiet" ' +
+                'style="margin-top:6px">Checking the access list, then loading ' +
+                'the Hub. This takes a few seconds.</div></div>'
+            : '<div id="gbtn"></div>') +
           /* NOT esc()'d, and that is deliberate — this one string is BUILT as
              HTML, with every dynamic part (the email Google returned, the
              snippet from the server) escaped at the point it goes in. Escaping

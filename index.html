@@ -620,7 +620,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '22 August 2026 · tap the build stamp to refresh the snapshot';
+var HUB_BUILD = '23 August 2026 · Policy, read-only — look a rule up without opening the sheet';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -730,7 +730,14 @@ var S = {
 
   /* Which background reads are still in flight. A row that has not arrived says
      "reading", not "could not be read" — null cannot tell those apart. */
-  pending:{ early:false, groom:false },
+  pending:{ early:false, groom:false, policy:false },
+
+  /* hubPolicy's reply — the six hand-edited tabs, read-only. Same null rule as
+     early and groom: NULL MEANS "NOT READ", never "no policy". It is fetched
+     only when somebody opens the screen, never on the sign-in path, because
+     it runs the health check and that reads the whole Log. */
+  policy:null,
+  ptab:'ladders',       // which of the six policy tabs is showing
 
   /* The open student's grooming record, and whether it is still coming. It
      lives in a different spreadsheet and is fetched only when a student page
@@ -884,7 +891,12 @@ var RETRY_SAFE = {
      that reason. */
   hubGoogleLogin:3,
   hubAll:3, hubEarly:3, hubHistory:3, hubDetention:3,
-  hubTeachers:3, hubGrooming:3, hubGroomingStudent:3
+  hubTeachers:3, hubGrooming:3, hubGroomingStudent:3,
+  /* READ-ONLY, SO IT RETRIES. hubPolicy writes nothing and takes no lock, which
+     is the whole test this table applies — a lost reply is a lost read and
+     nothing else. Contrast hubRebuild, which is deliberately absent: a retried
+     rebuild is a second rebuild. */
+  hubPolicy:3
 };
 
 function apiOnce(action, payload){
@@ -1767,6 +1779,271 @@ function loadAll(){
    The cost, stated plainly: the menu's grooming row now shows "not read yet"
    until you open the area once. That is a fair trade for a sign-in that works
    — and it is honest, which "0" would not have been. */
+/* ⚙️ POLICY, READ-ONLY ──────────────────────────────────────────────────────
+   Kim, 22 August 2026: "coz idw people touching the sheet." Most trips into the
+   spreadsheet are somebody going to LOOK at a rung, not to change one. This is
+   the looking half.
+
+   ⚠️ IT WRITES NOTHING, AND THAT IS THE SCOPE RATHER THAN AN UNFINISHED HALF.
+   Who may EDIT policy from the Hub is an open question in the Work row, and
+   until it has an answer a screen that cannot write cannot get it wrong. The
+   tabs stay directly editable either way — a form that becomes the only way in
+   is a form that blocks a fix at 07:50 on a morning it has a bug. */
+function loadPolicy(){
+  return api('hubPolicy', { token: TOKEN }).then(function(res){
+    /* A FAILED READ STAYS NULL. The screen must be able to say "could not be
+       read", which is a different sentence from "there is no policy" — and the
+       second one, on this screen, would look like a school with no rules. */
+    S.policy = (res && res.ok) ? res : null;
+    if (res && !res.ok) S.perr = res.error || '';
+  }).catch(function(){ S.policy = null; });
+}
+
+function ensurePolicy(){
+  if (S.policy || S.pending.policy) return Promise.resolve();
+  S.pending.policy = true; S.perr = '';
+  return loadPolicy().then(function(){
+    S.pending.policy = false;
+    if (TOKEN && S.view !== 'signin') render();
+  });
+}
+
+/* The six tabs, in the order somebody looking for a threshold would want them:
+   the rules first, the vocabulary they are written in next, the settings last. */
+var PTABS = [
+  { k:'ladders',    t:'Ladders',    s:'What follows, and at what count' },
+  { k:'statuses',   t:'Statuses',   s:'Every code the Log may carry' },
+  { k:'terms',      t:'Terms',      s:'When each term starts and ends' },
+  { k:'reasons',    t:'Reasons',    s:'Why a green slip was issued' },
+  { k:'categories', t:'Grooming',   s:'The categories checked on the phone' },
+  { k:'settings',   t:'Settings',   s:'Everything on ⚙️ Config' }
+];
+
+function policyHtml(){
+  var h = '<div class="screen' + (S.first?'':' still') + '"><div class="wrap wide">' +
+    '<div class="appbar"><a data-go="menu">&larr; All areas</a></div>';
+
+  if (S.pending.policy){
+    return h + '<h1>Policy</h1><div class="blank">Reading the policy tabs&hellip;</div>' +
+           '</div></div>';
+  }
+  if (!S.policy){
+    return h + '<h1>Policy</h1>' +
+      '<div class="blank">The policy tabs could not be read.' +
+      (S.perr ? '<div class="note quiet">' + esc(S.perr) + '</div>' : '') +
+      '</div></div></div>';
+  }
+
+  var d = S.policy;
+
+  /* NO builtHtml() HERE. This is read live off the tabs and has no snapshot
+     age — saying "built 07:10" would date it to the wrong thing entirely. */
+  h += '<div class="date">' + esc(todayLong()) +
+    ' <span class="built">as at ' + esc(d.serverTime || '') + '</span></div>' +
+    '<h1>Policy</h1>' +
+    '<div class="who">The rules, as the tracker reads them right now. ' +
+      '<b>This screen changes nothing</b> &mdash; it is here so that looking ' +
+      'something up does not mean opening the spreadsheet. To change a rule, ' +
+      'edit the tab; it takes effect on the next read, with no redeploy.</div>';
+
+  /* ⚠️ THE FINDINGS GO FIRST, ABOVE THE TABS. They are the only part of this
+     screen anybody has to act on, and the health check has always been a menu
+     item somebody had to remember to run. A rung that contradicts another rung
+     is invisible until something fires wrongly. */
+  var probs = d.health && d.health.problems || [];
+  var notes = d.health && d.health.notes || [];
+
+  if (probs.length){
+    h += '<div class="grouplabel">' + probs.length + ' problem' +
+         (probs.length===1?'':'s') + ' to fix</div><div class="rows">' +
+      probs.map(function(p){
+        return '<div class="row flat t5"><div class="body">' +
+          '<div class="meta">' + esc(p) + '</div></div></div>';
+      }).join('') + '</div>';
+  } else {
+    h += '<div class="grouplabel">Nothing wrong with the rules</div>' +
+      '<div class="blank">The health check found no problems. It read ' +
+      esc(String(d.health.counts.log)) + ' log row' +
+      (d.health.counts.log===1?'':'s') + ', ' +
+      esc(String(d.health.counts.tiers)) + ' ladder tier' +
+      (d.health.counts.tiers===1?'':'s') + ' and ' +
+      esc(String(d.health.counts.terms)) + ' term row' +
+      (d.health.counts.terms===1?'':'s') + '.</div>';
+  }
+
+  /* WHICH TABS COULD NOT BE READ AT ALL — its own block, not folded in with
+     the problems. A missing tab is a setup step somebody has not run yet
+     (🔧 Add any missing tabs), not a rule that is wrong. */
+  if ((d.unreadable||[]).length){
+    h += '<div class="grouplabel">Could not be read</div><div class="rows">' +
+      d.unreadable.map(function(u){
+        return '<div class="row flat t4"><div class="body">' +
+          '<div class="p">' + esc(u.tab) + '</div>' +
+          '<div class="meta">' + esc(u.why) + ' &mdash; if the tab has never been ' +
+          'added, 🎓 Discipline Tools &rarr; 🔧 Bring an older sheet up to date ' +
+          '&rarr; Add any missing tabs.</div></div></div>';
+      }).join('') + '</div>';
+  }
+
+  if (notes.length){
+    h += '<div class="grouplabel">For information</div><div class="rows">' +
+      notes.map(function(n){
+        return '<div class="row flat"><div class="body">' +
+          '<div class="meta">' + esc(n) + '</div></div></div>';
+      }).join('') + '</div>';
+  }
+
+  h += '<div class="tabs">' + PTABS.map(function(p){
+    return '<a class="' + (S.ptab===p.k?'on':'') + '" data-ptab="' + esc(p.k) + '">' +
+           esc(p.t) + '</a>';
+  }).join('') + '</div>';
+
+  var sub = (PTABS.filter(function(p){ return p.k===S.ptab; })[0]||{}).s || '';
+  if (sub) h += '<div class="note quiet">' + esc(sub) + '</div>';
+
+  h += policyTableHtml(d);
+
+  h += '<div class="foot"><span>Read live from the tabs each time this screen ' +
+    'opens. Consequences live in 🪜 Ladders and nowhere else &mdash; moving a ' +
+    'threshold is one cell and needs no deployment.</span></div>';
+
+  return h + '</div></div>';
+}
+
+/** One tag, or nothing at all when the fact is the ordinary one. */
+function ptag(on, label, cls){
+  return on ? '<span class="tag' + (cls?' '+cls:'') + '">' + label + '</span>' : '';
+}
+
+function policyTableHtml(d){
+  var k = S.ptab;
+
+  if (k === 'ladders'){
+    var rows = d.ladders || [];
+    if (!rows.length) return '<div class="blank">🪜 Ladders is empty. Nothing has any consequence at all.</div>';
+    /* GROUPED BY LADDER, because a rung means nothing on its own — the question
+       is always "what does THIS ladder do", and the rungs are read in order. */
+    var names = [], byName = {};
+    rows.forEach(function(r){
+      if (!byName[r.ladder]){ byName[r.ladder] = []; names.push(r.ladder); }
+      byName[r.ladder].push(r);
+    });
+    return names.map(function(n){
+      var rungs = byName[n].slice().sort(function(a,b){ return (a.at||0)-(b.at||0); });
+      return '<div class="grouplabel">' + esc(n) +
+        '<span class="note quiet"> &middot; counted by ' +
+        esc((rungs[0]&&rungs[0].counter)||'Term total').toLowerCase() + '</span></div>' +
+        '<div class="rows">' + rungs.map(function(r){
+          return '<div class="row flat' + (r.active?'':' soon') + '"><div class="body">' +
+            '<div class="p">At ' + esc(String(r.at)) + ' &middot; ' +
+              esc(r.action || 'nothing written in it') + '</div>' +
+            '<div class="meta">' +
+              [ r.who ? 'Acted on by ' + r.who : '',
+                r.seesRaw ? 'Seen by ' + r.seesRaw : '',
+                (r.sessions === null || r.sessions === undefined)
+                  ? '' : r.sessions + ' detention session' + (r.sessions===1?'':'s') +
+                         ' ' + (r.basis==='per tier'?'per tier':'per offence'),
+                r.dcFollowsUp ? 'DC follows up' : 'DC does not follow up'
+              ].filter(function(x){ return x; }).map(esc).join(' &middot; ') +
+            '</div></div><div class="dside">' +
+            ptag(r.repeats, 'Repeats') +
+            ptag(!r.active, 'Retired', 'quiet') +
+            '</div></div>';
+        }).join('') + '</div>';
+    }).join('');
+  }
+
+  if (k === 'statuses'){
+    var st = d.statuses || [];
+    if (!st.length) return '<div class="blank">🏷️ Statuses is empty.</div>';
+    return '<div class="rows">' + st.map(function(s){
+      return '<div class="row flat' + (s.active?'':' soon') + '"><div class="body">' +
+        '<div class="p">' + esc(s.code) + ' &middot; ' + esc(s.label) + '</div>' +
+        '<div class="meta">' +
+          (s.ladder ? 'Climbs the ' + esc(s.ladder) + ' ladder'
+                    : 'Reaches no ladder &mdash; it is recorded and counted, and nothing follows') +
+        '</div></div><div class="dside">' +
+        ptag(!s.counts, 'Not counted', 'quiet') +
+        ptag(!s.active, 'Retired', 'quiet') +
+        '</div></div>';
+    }).join('') + '</div>';
+  }
+
+  if (k === 'terms'){
+    var tm = d.terms || [];
+    if (!tm.length) return '<div class="blank">📅 Terms is empty &mdash; no event can be given a term.</div>';
+    return ['JC1','JC2'].map(function(c){
+      var mine = tm.filter(function(t){ return t.cohort===c; });
+      return '<div class="grouplabel">' + c + '</div>' +
+        (mine.length
+          ? '<div class="rows">' + mine.map(function(t){
+              return '<div class="row flat"><div class="body">' +
+                '<div class="p">Term ' + esc(String(t.term)) + '</div>' +
+                '<div class="meta">' + esc(t.start) +
+                  ' &rarr; ' + esc(t.end || 'the end of the year') + '</div>' +
+                '</div></div>';
+            }).join('') + '</div>'
+          /* ⚠️ THE TWO COHORTS DO NOT SHARE A TERM TABLE, so an empty half is a
+             real fault rather than a tidy default. */
+          : '<div class="blank">No term rows at all for ' + c + '.</div>');
+    }).join('');
+  }
+
+  if (k === 'reasons'){
+    var rs = d.reasons || [];
+    if (!rs.length) return '<div class="blank">🏷️ Reasons is empty.</div>';
+    return '<div class="rows">' + rs.map(function(r){
+      return '<div class="row flat' + (r.active?'':' soon') + '"><div class="body">' +
+        '<div class="p">' + esc(r.label || r.code) + '</div>' +
+        '<div class="meta">' + esc(r.code) + '</div>' +
+        '</div><div class="dside">' +
+        ptag(!r.counts, 'Does not count', 'quiet') +
+        ptag(!r.active, 'Off', 'quiet') +
+        '</div></div>';
+    }).join('') + '</div>';
+  }
+
+  if (k === 'categories'){
+    var cs = d.categories || [];
+    if (!cs.length) return '<div class="blank">🏷️ Categories has no rows the Hub can read.</div>';
+    return '<div class="rows">' + cs.map(function(c){
+      /* ⚠️ boys AND girls ARE THE LABELS, and a blank means the category does
+         not apply to that gender at all. Never fall back to `name` for a blank:
+         showing a girl a boys-only rule is showing her a rule that does not
+         exist for her. */
+      return '<div class="row flat' + (c.active?'':' soon') + '"><div class="body">' +
+        '<div class="p">' + esc(c.code) + ' &middot; ' + esc(c.name) + '</div>' +
+        '<div class="meta">' +
+          [ c.boys ? 'Boys: ' + c.boys : 'Does not apply to boys',
+            c.girls ? 'Girls: ' + c.girls : 'Does not apply to girls'
+          ].map(esc).join(' &middot; ') +
+        '</div></div><div class="dside">' + ptag(!c.active, 'Retired', 'quiet') +
+        '</div></div>';
+    }).join('') + '</div>';
+  }
+
+  var set = d.settings || [];
+  if (!set.length) return '<div class="blank">⚙️ Config could not be read.</div>';
+  return '<div class="rows">' + set.map(function(s){
+    return '<div class="row flat"><div class="body">' +
+      '<div class="p">' + esc(s.key) + '</div>' +
+      '<div class="meta">' +
+        (s.missing
+          ? 'Not on the tab at all &mdash; the tracker is falling back to a built-in default'
+          : s.secret
+            /* ⚠️ THE ID IS NEVER SHOWN. Not a secret — ⚙️ Config holds none —
+               but a document id is a handle, and a screenshot of this screen
+               passed round a staffroom would carry four of them. */
+            ? (s.set ? 'Set. The id itself is not shown on screen.'
+                     : 'Not set.')
+            : (s.set ? esc(String(s.value)) : 'Blank')) +
+      '</div></div><div class="dside">' +
+      ptag(s.missing, 'Missing', 'quiet') +
+      ptag(!!s.unrecognised, 'Not recognised') +
+      '</div></div>';
+  }).join('') + '</div>';
+}
+
 function ensureGrooming(){
   if (S.groom || S.pending.groom) return Promise.resolve();
   S.pending.groom = true;
@@ -1979,6 +2256,7 @@ function render(moved){
   else if (S.view==='booked') html = bookedHtml();
   else if (S.view==='sess')   html = sessHtml();
   else if (S.view==='soon')   html = soonHtml();
+  else if (S.view==='policy') html = policyHtml();
   v.innerHTML = html;
   if (moved){ v.scrollTop = 0; } else { v.scrollTop = keep; }
   wire();
@@ -2162,6 +2440,14 @@ function menuHtml(){
 
   var build = '<div class="s quiet" style="margin-top:34px;text-align:center">' +
     'Hub build ' + esc(HUB_BUILD) + '</div>';
+
+  /* ⚙️ POLICY. LAST IN THE LIST AND DELIBERATELY QUIET — it carries no count,
+     because it is not a worklist and nothing on it is owed by anybody. It sits
+     with the areas rather than in "Open another tool" because it is part of
+     this Hub, not a separate app with its own URL. */
+  rows += '<div class="mrow" data-area="__policy"><div class="mt">Policy' +
+    '<em>the ladders, statuses, terms and settings &mdash; read-only, so ' +
+    'nobody has to open the sheet to look something up</em></div></div>';
 
   var tools = '<div class="grouplabel">Open another tool</div><div class="mgrid">' +
     TOOLS.map(function(t){
@@ -6114,6 +6400,9 @@ function wire(){
     var etab = t.closest && t.closest('[data-etab]');
     if (etab){ S.etab = etab.getAttribute('data-etab'); render(); return; }
 
+    var ptab = t.closest && t.closest('[data-ptab]');
+    if (ptab){ S.ptab = ptab.getAttribute('data-ptab'); render(); return; }
+
     var gtab = t.closest && t.closest('[data-gtab]');
     if (gtab){ S.gtab = gtab.getAttribute('data-gtab'); render(); return; }
 
@@ -6200,6 +6489,7 @@ function wire(){
     var area = t.closest && t.closest('[data-area]');
     if (area){
       var key = area.getAttribute('data-area');
+      if (key === '__policy'){ ensurePolicy(); go('policy'); return; }
       if (key === '__early'){ go('early'); return; }
       if (key === '__groom'){ ensureGrooming(); go('groom'); return; }
       if (key === '__det'){ S.dtab = 'next'; go('det'); return; }

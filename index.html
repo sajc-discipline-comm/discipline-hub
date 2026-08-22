@@ -620,7 +620,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '23 August 2026 · Policy, read-only — look a rule up without opening the sheet';
+var HUB_BUILD = '23 August 2026';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -1879,11 +1879,7 @@ function policyHtml(){
      age — saying "built 07:10" would date it to the wrong thing entirely. */
   h += '<div class="date">' + esc(todayLong()) +
     ' <span class="built">as at ' + esc(d.serverTime || '') + '</span></div>' +
-    '<h1>Policy</h1>' +
-    '<div class="who">The rules, as the tracker reads them right now. ' +
-      '<b>This screen changes nothing</b> &mdash; it is here so that looking ' +
-      'something up does not mean opening the spreadsheet. To change a rule, ' +
-      'edit the tab; it takes effect on the next read, with no redeploy.</div>';
+    '<h1>Policy <span class="tag quiet">Read-only</span></h1>';
 
   /* ⚠️ THE FINDINGS GO FIRST, ABOVE THE TABS. They are the only part of this
      screen anybody has to act on, and the health check has always been a menu
@@ -1896,29 +1892,19 @@ function policyHtml(){
      checking" must never be drawn as "nothing wrong" — the findings arrive on
      their own request and the tabs almost always beat them. */
   if (S.pending.phealth || (!S.phealth && !S.pherr)){
-    h += '<div class="grouplabel">Checking the rules</div>' +
-      '<div class="blank">Reading the Log and the Master Database&hellip; ' +
-      'the rules below are already what the tracker reads.</div>';
+    h += '<div class="grouplabel">Checking</div>' +
+      '<div class="blank">Reading the Log&hellip;</div>';
   } else if (!S.phealth){
     h += '<div class="grouplabel">The check could not run</div>' +
       '<div class="blank">' + esc(S.pherr || 'The check did not come back.') +
       '</div>';
   } else if (probs.length){
     h += '<div class="grouplabel">' + probs.length + ' problem' +
-         (probs.length===1?'':'s') + ' to fix</div><div class="rows">' +
-      probs.map(function(p){
-        return '<div class="row flat t5"><div class="body">' +
-          '<div class="meta">' + esc(p) + '</div></div></div>';
-      }).join('') + '</div>';
+         (probs.length===1?'':'s') + '</div>' + findingsHtml(probs, 'p');
   } else {
-    h += '<div class="grouplabel">Nothing wrong with the rules</div>' +
-      '<div class="blank">The health check found no problems. It read ' +
-      esc(String(S.phealth.counts.log)) + ' log row' +
-      (S.phealth.counts.log===1?'':'s') + ', ' +
-      esc(String(S.phealth.counts.tiers)) + ' ladder tier' +
-      (S.phealth.counts.tiers===1?'':'s') + ' and ' +
-      esc(String(S.phealth.counts.terms)) + ' term row' +
-      (S.phealth.counts.terms===1?'':'s') + '.</div>';
+    h += '<div class="grouplabel">Nothing wrong</div>' +
+      '<div class="blank">Checked ' + esc(String(S.phealth.counts.tiers)) +
+      ' rungs against ' + esc(String(S.phealth.counts.log)) + ' log rows.</div>';
   }
 
   /* WHICH TABS COULD NOT BE READ AT ALL — its own block, not folded in with
@@ -1929,18 +1915,13 @@ function policyHtml(){
       d.unreadable.map(function(u){
         return '<div class="row flat t4"><div class="body">' +
           '<div class="p">' + esc(u.tab) + '</div>' +
-          '<div class="meta">' + esc(u.why) + ' &mdash; if the tab has never been ' +
-          'added, 🎓 Discipline Tools &rarr; 🔧 Bring an older sheet up to date ' +
-          '&rarr; Add any missing tabs.</div></div></div>';
+          '<div class="meta">🎓 Discipline Tools &rarr; 🔧 Bring an older sheet ' +
+          'up to date &rarr; Add any missing tabs</div></div></div>';
       }).join('') + '</div>';
   }
 
   if (notes.length){
-    h += '<div class="grouplabel">For information</div><div class="rows">' +
-      notes.map(function(n){
-        return '<div class="row flat"><div class="body">' +
-          '<div class="meta">' + esc(n) + '</div></div></div>';
-      }).join('') + '</div>';
+    h += '<div class="grouplabel">For information</div>' + findingsHtml(notes, 'n');
   }
 
   h += '<div class="tabs">' + PTABS.map(function(p){
@@ -1948,16 +1929,48 @@ function policyHtml(){
            esc(p.t) + '</a>';
   }).join('') + '</div>';
 
-  var sub = (PTABS.filter(function(p){ return p.k===S.ptab; })[0]||{}).s || '';
-  if (sub) h += '<div class="note quiet">' + esc(sub) + '</div>';
-
   h += policyTableHtml(d);
 
-  h += '<div class="foot"><span>Read live from the tabs each time this screen ' +
-    'opens. Consequences live in 🪜 Ladders and nowhere else &mdash; moving a ' +
-    'threshold is one cell and needs no deployment.</span></div>';
-
   return h + '</div></div>';
+}
+
+/**
+ * A HEALTH FINDING IS A HEADLINE AND A REST, and only the headline is drawn.
+ *
+ * ⚠️ THESE SENTENCES WERE WRITTEN FOR ui.alert, WHERE A PARAGRAPH IS ALL YOU
+ * GET. One of them runs to 79 words. Eleven of them stacked at the top of a
+ * screen is not a health check, it is a wall — Kim, 23 August 2026: "it's just
+ * information overload... so many words and writing that i feel isn't
+ * necessary." The words are not wrong; they are the wrong shape for a screen.
+ *
+ * THE SPLIT IS AT THE FIRST SENTENCE END, and the rest goes behind a tap. That
+ * keeps ONE source of truth — healthFindings_ still writes one string, the menu
+ * item still alerts it whole — while the screen shows what a scan needs. A
+ * second, shorter set of messages written for the Hub would be the same fact
+ * kept in two places, which is the thing this project keeps being bitten by.
+ *
+ * A finding with no split point is drawn plainly, with nothing to open.
+ */
+function findingsHtml(list, kind){
+  return '<div class="rows">' + list.map(function(t, i){
+    var full = String(t);
+    /* END OF THE FIRST SENTENCE — a full stop, an em dash or a colon, whichever
+       comes first past a reasonable headline length. Not a fixed character
+       count, which would cut "🎓 Discipline Tools → 🔐 Passwords" in half. */
+    var m = full.slice(0, 220).match(/^([\s\S]{20,}?)(?:\.\s|\s&mdash;\s|\s—\s|:\s)([\s\S]+)$/);
+    var head = m ? m[1] : full;
+    var rest = m ? m[2] : '';
+    if (!rest) {
+      return '<div class="row flat' + (kind==='p'?' t5':'') + '"><div class="body">' +
+        '<div class="meta">' + esc(full) + '</div></div></div>';
+    }
+    var id = 'hf' + kind + i;
+    return '<div class="fold" id="' + id + '">' +
+      '<button class="foldh" type="button" data-fold="' + id + '">' +
+        '<span class="fchev">&rsaquo;</span>' +
+        '<span class="fname">' + esc(head) + '</span></button>' +
+      '<div class="foldb"><div class="meta">' + esc(rest) + '</div></div></div>';
+  }).join('') + '</div>';
 }
 
 /** One tag, or nothing at all when the fact is the ordinary one. */
@@ -1981,19 +1994,20 @@ function policyTableHtml(d){
     return names.map(function(n){
       var rungs = byName[n].slice().sort(function(a,b){ return (a.at||0)-(b.at||0); });
       return '<div class="grouplabel">' + esc(n) +
-        '<span class="note quiet"> &middot; counted by ' +
+        '<span class="note quiet"> &middot; ' +
         esc((rungs[0]&&rungs[0].counter)||'Term total').toLowerCase() + '</span></div>' +
         '<div class="rows">' + rungs.map(function(r){
           return '<div class="row flat' + (r.active?'':' soon') + '"><div class="body">' +
             '<div class="p">At ' + esc(String(r.at)) + ' &middot; ' +
               esc(r.action || 'nothing written in it') + '</div>' +
             '<div class="meta">' +
-              [ r.who ? 'Acted on by ' + r.who : '',
-                r.seesRaw ? 'Seen by ' + r.seesRaw : '',
-                (r.sessions === null || r.sessions === undefined)
-                  ? '' : r.sessions + ' detention session' + (r.sessions===1?'':'s') +
-                         ' ' + (r.basis==='per tier'?'per tier':'per offence'),
-                r.dcFollowsUp ? 'DC follows up' : 'DC does not follow up'
+              [ r.who || '',
+                r.seesRaw ? 'sees ' + r.seesRaw : '',
+                /* ONLY WHEN THERE IS ONE, and "per tier" only because it is
+                   the rarer basis. A rung owing nothing now says nothing. */
+                (r.sessions ? r.sessions + ' session' + (r.sessions===1?'':'s') +
+                              (r.basis==='per tier' ? ' per tier' : '') : ''),
+                r.dcFollowsUp ? '' : 'no DC follow-up'
               ].filter(function(x){ return x; }).map(esc).join(' &middot; ') +
             '</div></div><div class="dside">' +
             ptag(r.repeats, 'Repeats') +
@@ -2010,8 +2024,7 @@ function policyTableHtml(d){
       return '<div class="row flat' + (s.active?'':' soon') + '"><div class="body">' +
         '<div class="p">' + esc(s.code) + ' &middot; ' + esc(s.label) + '</div>' +
         '<div class="meta">' +
-          (s.ladder ? 'Climbs the ' + esc(s.ladder) + ' ladder'
-                    : 'Reaches no ladder &mdash; it is recorded and counted, and nothing follows') +
+          (s.ladder ? esc(s.ladder) : 'no ladder') +
         '</div></div><div class="dside">' +
         ptag(!s.counts, 'Not counted', 'quiet') +
         ptag(!s.active, 'Retired', 'quiet') +
@@ -2079,14 +2092,13 @@ function policyTableHtml(d){
       '<div class="p">' + esc(s.key) + '</div>' +
       '<div class="meta">' +
         (s.missing
-          ? 'Not on the tab at all &mdash; the tracker is falling back to a built-in default'
+          ? 'using the built-in default'
           : s.secret
             /* ⚠️ THE ID IS NEVER SHOWN. Not a secret — ⚙️ Config holds none —
                but a document id is a handle, and a screenshot of this screen
                passed round a staffroom would carry four of them. */
-            ? (s.set ? 'Set. The id itself is not shown on screen.'
-                     : 'Not set.')
-            : (s.set ? esc(String(s.value)) : 'Blank')) +
+            ? (s.set ? 'set &mdash; not shown here' : 'not set')
+            : (s.set ? esc(String(s.value)) : 'blank')) +
       '</div></div><div class="dside">' +
       ptag(s.missing, 'Missing', 'quiet') +
       ptag(!!s.unrecognised, 'Not recognised') +
@@ -2429,8 +2441,7 @@ function menuHtml(){
   } else {
     var eFlag = earlyFlagged().length, eAll = (S.early.students || []).length;
     rows += '<div class="mrow' + (eFlag ? ' t3' : '') + '" data-area="__early">' +
-      '<div class="mt">Early dismissals' +
-        '<em>who is leaving early, how often, and why</em></div>' +
+      '<div class="mt">Early dismissals</div>' +
       big(eFlag, 'over the threshold') +
       big(eAll, 'students this year') +
     '</div>';
@@ -2458,8 +2469,7 @@ function menuHtml(){
   } else {
     var gFlag = (S.groom.students || []).filter(function(x){ return x.overTerm; }).length;
     rows += '<div class="mrow' + (gFlag ? ' t3' : '') + '" data-area="__groom">' +
-      '<div class="mt">Grooming and attire' +
-        '<em>repeat offenders, by class and by category</em></div>' +
+      '<div class="mt">Grooming and attire</div>' +
       big(gFlag, 'over the threshold') +
       big(S.groom.openTotal || 0, 'not yet fixed') +
     '</div>';
@@ -2483,7 +2493,7 @@ function menuHtml(){
     var dHome = dOwe.filter(function(o){ return !o.undecided && o.left && homeless(o.x); })
                     .reduce(function(n,o){ return n + o.left; }, 0);
     rows += '<div class="mrow' + (dLate ? ' t4' : '') + '" data-area="__det">' +
-      '<div class="mt">Detention Sessions<em>the Wednesday room &mdash; who is in it, and who still owes' +
+      '<div class="mt">Detention Sessions<em>' +
         (dUnd ? ' &middot; ' + dUnd + ' tier' + (dUnd===1?'':'s') + ' with no session count set' : '') +
         (dJunk ? ' &middot; ' + dJunk + ' row' + (dJunk===1?'':'s') + ' with an unreadable date' : '') +
         /* WHY THIS TOTAL CAN EXCEED THE FOUR AREA FIGURES ABOVE. A student
@@ -2523,9 +2533,8 @@ function menuHtml(){
      because it is not a worklist and nothing on it is owed by anybody. It sits
      with the areas rather than in "Open another tool" because it is part of
      this Hub, not a separate app with its own URL. */
-  rows += '<div class="mrow" data-area="__policy"><div class="mt">Policy' +
-    '<em>the ladders, statuses, terms and settings &mdash; read-only, so ' +
-    'nobody has to open the sheet to look something up</em></div></div>';
+  rows += '<div class="mrow" data-area="__policy">' +
+    '<div class="mt">Policy</div></div>';
 
   var tools = '<div class="grouplabel">Open another tool</div><div class="mgrid">' +
     TOOLS.map(function(t){
@@ -2566,10 +2575,8 @@ function menuHtml(){
           ' &mdash; run <b>speed()</b> in the browser console for the full list.</span></div>'
         : '';
     })() +
-    '<div class="foot"><span>Counts come from the snapshot, which is rebuilt on a timer &mdash; ' +
-    'each area says how old its figures are. Early dismissals and grooming are read live. ' +
-    'Nothing is locked &mdash; every area opens for anyone.</span>' +
-    '<span class="sp"></span><button class="plain" id="out">Sign out</button></div>' +
+    '<div class="foot"><span class="sp"></span>' +
+    '<button class="plain" id="out">Sign out</button></div>' +
   '</div></div>';
 }
 

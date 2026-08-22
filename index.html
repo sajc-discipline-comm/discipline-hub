@@ -71,6 +71,8 @@ h2{font-size:24px;margin-bottom:4px}
 .centre .date{justify-content:center}
 .centre .date:after{display:none}
 .built{font-size:12.5px;color:var(--muted);font-weight:400;white-space:nowrap}
+.built[data-rebuild]{cursor:pointer}
+.built-do{text-decoration:underline;white-space:nowrap}
 .built.old{color:var(--warn)}
 .who{font-size:15.5px;color:var(--muted);margin-bottom:16px}
 .sub{font-size:21px;color:var(--muted);font-family:'Fraunces',Georgia,serif;font-variation-settings:'opsz' 40,'SOFT' 30,'WONK' 1}
@@ -618,7 +620,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxm68iLB0wBy-goORwxBAK3Zy
    is the same idea, with one improvement: a test refuses to pass when the date
    here is older than the newest dated note in this file, so forgetting to bump
    it is a failure rather than a thing nobody notices. */
-var HUB_BUILD = '21 August 2026 (e) · says who has no email address · grooming counts a student once';
+var HUB_BUILD = '22 August 2026 · tap the build stamp to refresh the snapshot';
 
 /* ── GOOGLE SIGN-IN, 4 AUGUST 2026 ────────────────────────────────────────
    Paste the OAuth client ID from Google Cloud Console here, and the SAME value
@@ -704,6 +706,7 @@ function forgetSession(){ try { localStorage.removeItem(TOKEN_KEY); } catch(e){}
 
 var S = {
   view:'signin', user:'', name:'', busy:false, err:'',
+  rebuilding:false,     // a rebuild the reader asked for is in flight
   snap:null,            // the snapshot part of hubAll's reply, whole
   det:null,             // the detention part of hubAll's reply, or null
   /* hubEarly's reply, or null. NULL MEANS "COULD NOT READ", NEVER "NONE" —
@@ -1435,18 +1438,51 @@ function mins(hhmm){
   return m ? Number(m[1])*60+Number(m[2]) : null;
 }
 
-/* How old the snapshot is, in words. Every slow screen carries this because
-   nothing on the client can force a rebuild. */
+/* ── HOW OLD THE SNAPSHOT IS, AND THE WAY TO FIX IT ────────────────────────
+   This used to end "because nothing on the client can force a rebuild". Since
+   22 August 2026 it can — hubRebuild — and the STAMP IS THE CONTROL, which is
+   the whole point of putting it here: the reader is already looking at the old
+   time when they decide they want a new one. A button somewhere else is a
+   button found by people who already knew it existed.
+
+   WHY IT WAS ADDED. snapshotTick stands aside during the gate rush, and
+   grooming moved into the tracker — so a check at 07:40 reaches 📋 Log at once
+   while the screens that say what to DO about her wait until nine. */
 function builtHtml(){
   if (!S.snap) return '';
+  if (S.rebuilding) return '<span class="built">Rebuilding…</span>';
   var at = String(S.snap.rebuiltAt||'').trim();
-  if (!at) return '<span class="built old">Never rebuilt &mdash; run 📸 Rebuild the Snapshot now</span>';
+  var tail = ' <span class="built-do">↻ Refresh</span>';
+  if (!at) return '<span class="built old" data-rebuild="1">Never rebuilt' + tail + '</span>';
   var m = /(\d{1,2}:\d{2})\s*$/.exec(at);
   var shown = m ? m[1] : at;
   var age = (m && mins(S.snap.serverTime)!==null) ? mins(S.snap.serverTime) - mins(m[1]) : null;
   var old = (age !== null && age > STALE_MIN);
-  return '<span class="built' + (old?' old':'') + '">Built ' + esc(shown) +
-         (old ? ' &mdash; ' + Math.round(age/60) + 'h ago' : '') + '</span>';
+  return '<span class="built' + (old?' old':'') + '" data-rebuild="1">Built ' + esc(shown) +
+         (old ? ' &mdash; ' + Math.round(age/60) + 'h ago' : '') + tail + '</span>';
+}
+
+/* ── REBUILDING, FROM HERE ─────────────────────────────────────────────────
+   ⚠️ NOT IN RETRY_SAFE, deliberately. A retried rebuild is a second rebuild,
+   and the server refuses the second one as busy — correctly, but the reader
+   would see a refusal for a click that worked. One go; the server's own
+   answer is the whole story.
+
+   THE SERVER'S WORDING IS PRINTED AS-IS. "You just rebuilt this" and "a
+   rebuild is already running" are not failures and must not be dressed as
+   them; both mean wait a moment, which is a thing a person can do. */
+function rebuildNow(){
+  if (S.rebuilding) return;
+  S.rebuilding = true; S.err = ''; render();
+  api('hubRebuild', { token: TOKEN }).then(function(res){
+    S.rebuilding = false;
+    if (!res || !res.ok){ S.err = (res && res.error) || 'The rebuild did not run.'; render(); return; }
+    /* Re-read rather than patch the stamp: the point of the click was the
+       ROWS, and a fresh time over stale rows is the worst of both. */
+    return loadAll().then(function(){ S.err = ''; render(); });
+  }).catch(function(e){
+    S.rebuilding = false; S.err = e.message; render();
+  });
 }
 
 /* ── sign in ──────────────────────────────────────────────────────────── */
@@ -6156,6 +6192,10 @@ function wire(){
       if (S.pickDates[key2]) delete S.pickDates[key2]; else S.pickDates[key2] = true;
       S.err = ''; render(); return;
     }
+
+    /* BEFORE [data-area], because the stamp is drawn INSIDE rows that navigate.
+       Tapping "Built 07:10" must refresh, never open a worklist. */
+    if (t.closest && t.closest('[data-rebuild]')){ rebuildNow(); return; }
 
     var area = t.closest && t.closest('[data-area]');
     if (area){
